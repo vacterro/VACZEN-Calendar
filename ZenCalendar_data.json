@@ -1,0 +1,42 @@
+{
+  "settings": {
+    "week_start_monday": true,
+    "show_week_numbers": false,
+    "show_clock": true,
+    "fullscreen_start": true,
+    "always_on_top": true,
+    "focus_mode": false,
+    "theme": "w95dark",
+    "cell_gap": 2,
+    "cell_padding": 4,
+    "lang": "ru",
+    "font_family": "MS Sans Serif",
+    "font_mono": "Courier New",
+    "font_title_size": 14,
+    "font_body_size": 11,
+    "font_small_size": 10,
+    "font_day_size": 12,
+    "font_day_bold": true,
+    "color_app_bg": "#000000",
+    "color_panel_bg": "#141414",
+    "color_text": "#c0c0c0",
+    "color_muted": "#808080",
+    "color_header": "#dfdfdf",
+    "color_button_bg": "#1e1e1e",
+    "color_button_fg": "#c0c0c0",
+    "color_button_active": "#141414",
+    "color_weekend_bg": "#1a0a0a",
+    "color_today_border": "#9DD9F9",
+    "color_selected_border": "#dfdfdf",
+    "color_task_dot": "#808080",
+    "color_today_text": "#9DD9F9",
+    "color_detail_bg": "#141414",
+    "color_detail_fg": "#c0c0c0"
+  },
+  "tasks": {},
+  "state": {
+    "year": 2026,
+    "month": 6,
+    "selected_day": 7
+  }
+}
