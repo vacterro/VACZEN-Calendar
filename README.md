@@ -1,5 +1,9 @@
 # VACZEN Calendar
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Version](https://img.shields.io/badge/version-0.0.1-green.svg)
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+
 A clean, distraction-free calendar application for personal task management.
 
 ## Version
