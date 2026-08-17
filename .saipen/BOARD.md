@@ -3,6 +3,8 @@
 ## DOING
 
 ## TODO
+- [ ] T-010 Silent failures: bare `except: pass` in zen_calendar_gpt.py (~L405, L807) swallow errors | verify: add minimal error logging/handling
+- [ ] T-011 Leftover `zen_calendar_gpt.py.backup` committed; 3 calendar variants (1/2/gpt) - canonical entry unclear | verify: remove .backup, document shipped .py
 
 ## DONE
 - [x] T-001 VACZEN Calendar - README + EN/RU/ET translations (v0.0.1)
