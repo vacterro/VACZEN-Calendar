@@ -1,6 +1,8 @@
 import calendar
 import json
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -87,6 +89,55 @@ DEFAULT_SETTINGS = {
     "color_detail_bg": "#1a1a1a",
     "color_detail_fg": "#e0d4c3",
 }
+
+
+def normalize_settings(raw):
+    """Validate and coerce persisted settings to safe runtime values."""
+    out = {}
+    for key, default in DEFAULT_SETTINGS.items():
+        if key not in raw:
+            continue
+        val = raw[key]
+        try:
+            if isinstance(default, bool):
+                if isinstance(val, bool):
+                    out[key] = val
+                elif isinstance(val, (int, float)):
+                    out[key] = bool(val)
+                elif isinstance(val, str) and val.lower() in ("true", "1", "yes"):
+                    out[key] = True
+                elif isinstance(val, str) and val.lower() in ("false", "0", "no"):
+                    out[key] = False
+                else:
+                    out[key] = default
+            elif isinstance(default, int):
+                iv = int(val)
+                if key == "cell_gap":
+                    out[key] = max(0, min(iv, 12))
+                elif key == "cell_padding":
+                    out[key] = max(0, min(iv, 20))
+                elif key in ("font_title_size", "font_body_size", "font_small_size",
+                             "font_day_size", "font_task_size"):
+                    out[key] = max(6, min(iv, 72))
+                else:
+                    out[key] = iv
+            elif isinstance(default, str):
+                sv = str(val).strip()
+                if key == "lang":
+                    out[key] = sv if sv in ("ru", "en", "uk") else default
+                elif key == "theme":
+                    out[key] = sv if sv in ("dark", "light", "win95dark") else default
+                elif key.startswith("color_"):
+                    if sv.startswith("#") and len(sv) in (4, 7):
+                        out[key] = sv
+                    else:
+                        out[key] = default
+                else:
+                    out[key] = sv if sv else default
+        except (ValueError, TypeError, AttributeError):
+            out[key] = default
+    return out
+
 
 class SettingsDialog(tk.Toplevel):
     def __init__(self, parent, app):
@@ -234,11 +285,15 @@ class SettingsDialog(tk.Toplevel):
             self.app.open_settings()
 
     def save(self):
+        # W2-006: Build candidate settings and validate before applying
+        candidate = self.app.settings.copy()
+        raw = {}
         for k, v in self.vars.items():
-            self.app.settings[k] = v.get()
+            raw[k] = v.get()
         for k, v in self.color_vars.items():
-            self.app.settings[k] = v.get()
-        
+            raw[k] = v.get()
+        candidate.update(normalize_settings(raw))
+        self.app.settings = candidate
         self.app.save()
         self.app.apply_settings()
         self.destroy()
@@ -256,6 +311,7 @@ class CompactCalendarApp:
         self.current = date.today().replace(day=1)
         self.selected_day = date.today().day
         self.cells_by_day = {}
+        self._generation = 0
         self._load()
         self._apply_window_mode()
         self._build_style()
@@ -376,19 +432,29 @@ class CompactCalendarApp:
         self.grid_frame.pack(fill="both", expand=True)
 
     # ---------- key bindings ----------
+    def _is_editing_focused(self):
+        """Check if focus is in an editable widget that needs normal key handling."""
+        try:
+            w = self.root.focus_get()
+            if w is None:
+                return False
+            return isinstance(w, (tk.Entry, tk.Text, ttk.Spinbox, ttk.Combobox))
+        except (tk.TclError, RuntimeError):
+            return False
+
     def _bind_keys(self):
         self.root.bind("<Escape>", self.exit_app)
-        self.root.bind("<Left>", lambda e: self.prev_month())
-        self.root.bind("<Right>", lambda e: self.next_month())
-        self.root.bind("<Up>", lambda e: self.prev_year())
-        self.root.bind("<Down>", lambda e: self.next_year())
-        self.root.bind("a", lambda e: self.add_task())
-        self.root.bind("e", lambda e: self.edit_task())
-        self.root.bind("d", lambda e: self.delete_task())
-        self.root.bind("s", lambda e: self.save())
-        self.root.bind("o", lambda e: self.open_settings())
-        self.root.bind("<space>", lambda e: self.toggle_done())
-        self.root.bind("<Delete>", lambda e: self.delete_task())
+        self.root.bind("<Left>", lambda e: None if self._is_editing_focused() else self.prev_month())
+        self.root.bind("<Right>", lambda e: None if self._is_editing_focused() else self.next_month())
+        self.root.bind("<Up>", lambda e: None if self._is_editing_focused() else self.prev_year())
+        self.root.bind("<Down>", lambda e: None if self._is_editing_focused() else self.next_year())
+        self.root.bind("a", lambda e: None if self._is_editing_focused() else self.add_task())
+        self.root.bind("e", lambda e: None if self._is_editing_focused() else self.edit_task())
+        self.root.bind("d", lambda e: None if self._is_editing_focused() else self.delete_task())
+        self.root.bind("s", lambda e: None if self._is_editing_focused() else self.save())
+        self.root.bind("o", lambda e: None if self._is_editing_focused() else self.open_settings())
+        self.root.bind("<space>", lambda e: None if self._is_editing_focused() else self.toggle_done())
+        self.root.bind("<Delete>", lambda e: None if self._is_editing_focused() else self.delete_task())
 
     # ---------- task key & helpers ----------
     def _task_key(self, day_num=None):
@@ -580,9 +646,10 @@ class CompactCalendarApp:
             return
         tasks = self.tasks.get(self._task_key(day_num), [])
         
-        for w in info.get("top_right_frame", tk.Frame()).winfo_children():
+        # PERF-001: Access frames directly to avoid widget leak
+        for w in info["top_right_frame"].winfo_children():
             w.destroy()
-        for w in info.get("tasks_frame", tk.Frame()).winfo_children():
+        for w in info["tasks_frame"].winfo_children():
             w.destroy()
 
         for t in tasks[:6]:
@@ -590,15 +657,22 @@ class CompactCalendarApp:
             if t.kind == "event": color = self.settings.get("color_task_event", "#00aa00")
             elif t.kind == "reminder": color = self.settings.get("color_task_reminder", "#ffcc00")
             
+            # W2-005: Show done-state visually
+            if t.done:
+                text = f"✓ {t.title}"
+                fg = self._muted_fg()
+            elif t.kind == "task":
+                text = f"• {t.title}"
+                fg = color
+            else:
+                text = t.title
+                fg = color
+
             is_top = (t.kind in ["event", "reminder"])
             parent = info["top_right_frame"] if is_top else info["tasks_frame"]
             
-            text = t.title
-            if t.kind == "task":
-                text = f"• {text}"
-                
             lbl = tk.Label(
-                parent, text=text, bg=info["bg"], fg=color,
+                parent, text=text, bg=info["bg"], fg=fg,
                 font=self._font(self.settings.get("font_task_size", 9)),
                 anchor="nw", justify="left"
             )
@@ -611,13 +685,17 @@ class CompactCalendarApp:
     # ---------- task CRUD (keyboard-driven) ----------
     def add_task(self):
         title = simpledialog.askstring("Add task", "Task title:", parent=self.root)
-        if not title: return
+        if title is None: return
         title = title.strip()
         if not title: return
-        time_str = simpledialog.askstring("Time", "Time (optional):", parent=self.root) or ""
-        note = simpledialog.askstring("Note", "Note (optional):", parent=self.root) or ""
-        kind = simpledialog.askstring("Kind", "task / event / reminder:", parent=self.root) or "task"
-        priority = simpledialog.askstring("Priority", "low / normal / high:", parent=self.root) or "normal"
+        time_str = simpledialog.askstring("Time", "Time (optional):", parent=self.root)
+        if time_str is None: return
+        note = simpledialog.askstring("Note", "Note (optional):", parent=self.root)
+        if note is None: return
+        kind = simpledialog.askstring("Kind", "task / event / reminder:", parent=self.root)
+        if kind is None: return
+        priority = simpledialog.askstring("Priority", "low / normal / high:", parent=self.root)
+        if priority is None: return
 
         task = CalendarTask(
             title=title, time=time_str.strip(), note=note.strip(),
@@ -660,11 +738,14 @@ class CompactCalendarApp:
         if title is None: return
         title = title.strip()
         if not title: return
-
-        time_str = simpledialog.askstring("Edit time", "Time:", initialvalue=task.time, parent=self.root) or ""
-        note = simpledialog.askstring("Edit note", "Note:", initialvalue=task.note, parent=self.root) or ""
-        kind = simpledialog.askstring("Edit kind", "task / event / reminder:", initialvalue=task.kind, parent=self.root) or task.kind
-        priority = simpledialog.askstring("Edit priority", "low / normal / high:", initialvalue=task.priority, parent=self.root) or task.priority
+        time_str = simpledialog.askstring("Edit time", "Time:", initialvalue=task.time, parent=self.root)
+        if time_str is None: return
+        note = simpledialog.askstring("Edit note", "Note:", initialvalue=task.note, parent=self.root)
+        if note is None: return
+        kind = simpledialog.askstring("Edit kind", "task / event / reminder:", initialvalue=task.kind, parent=self.root)
+        if kind is None: return
+        priority = simpledialog.askstring("Edit priority", "low / normal / high:", initialvalue=task.priority, parent=self.root)
+        if priority is None: return
 
         items[idx] = CalendarTask(
             title=title, time=time_str.strip(), note=note.strip(), done=task.done,
@@ -716,11 +797,13 @@ class CompactCalendarApp:
 
     def prev_year(self):
         y = self.current.year - 1
+        if y < date.min.year: return
         m = self.current.month
         self._set_current_date(y, m)
 
     def next_year(self):
         y = self.current.year + 1
+        if y > date.max.year: return
         m = self.current.month
         self._set_current_date(y, m)
 
@@ -742,9 +825,11 @@ class CompactCalendarApp:
                 self.clock_lbl.config(text=f"Сегодня {day}{suffix} {m_name}, {now.year} {w_name}")
             else:
                 self.clock_lbl.config(text=now.strftime("%d %b %Y  %H:%M:%S"))
+            delay_ms = (60 - now.second) * 1000
         else:
             self.clock_lbl.config(text="")
-        self.root.after(1000, self._tick_clock)
+            delay_ms = 60_000
+        self.root.after(delay_ms, self._tick_clock)
 
     # ---------- persistence ----------
     def save(self):
@@ -753,6 +838,7 @@ class CompactCalendarApp:
     def _save(self):
         try: geom = self.root.geometry()
         except: geom = ""
+        self._generation += 1
         payload = {
             "settings": self.settings,
             "tasks": {k: [t.to_dict() for t in v] for k, v in self.tasks.items()},
@@ -762,54 +848,83 @@ class CompactCalendarApp:
                 "selected_day": self.selected_day,
             },
             "window_geometry": geom,
+            "generation": self._generation,
         }
+        # CORE-003 + W2-001: Atomic write via temp file + rename
         try:
             DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-            DATA_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(DATA_PATH.parent), prefix=".cal_tmp_", suffix=".json"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, str(DATA_PATH))
+            except Exception:
+                try: os.unlink(tmp_path)
+                except OSError: pass
         except (OSError, TypeError, ValueError):
             pass
 
     def _load(self):
         if not DATA_PATH.exists():
             return
+
+        raw_text = None
         try:
-            payload = json.loads(DATA_PATH.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict):
-                return
-            settings = payload.get("settings", {})
-            if isinstance(settings, dict):
-                # update only known keys, ignore focus_mode remnants
-                for k, v in settings.items():
+            raw_text = DATA_PATH.read_text(encoding="utf-8")
+        except OSError:
+            return
+
+        payload = None
+        try:
+            payload = json.loads(raw_text)
+        except (json.JSONDecodeError, ValueError):
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        # CORE-001 + CORE-002: Parse each section independently
+        # Settings - normalize per-key
+        raw_settings = payload.get("settings", {})
+        if isinstance(raw_settings, dict):
+            new_settings = normalize_settings(raw_settings)
+            if new_settings:
+                for k, v in new_settings.items():
                     if k in DEFAULT_SETTINGS:
                         self.settings[k] = v
 
-            raw_tasks = payload.get("tasks", {})
-            if isinstance(raw_tasks, dict):
-                loaded_tasks = {}
-                for k, v in raw_tasks.items():
-                    if not isinstance(k, str): continue
-                    if not isinstance(v, list): continue
-                    loaded_tasks[k] = [CalendarTask.from_dict(x) for x in v if isinstance(x, dict)]
-                self.tasks = loaded_tasks
+        # Tasks - keep even if state fails
+        raw_tasks = payload.get("tasks", {})
+        if isinstance(raw_tasks, dict):
+            loaded_tasks = {}
+            for k, v in raw_tasks.items():
+                if not isinstance(k, str): continue
+                if not isinstance(v, list): continue
+                loaded_tasks[k] = [CalendarTask.from_dict(x) for x in v if isinstance(x, dict)]
+            self.tasks = loaded_tasks
 
-            st = payload.get("state", {})
-            if isinstance(st, dict):
-                y = int(st.get("year", date.today().year))
-                m = int(st.get("month", date.today().month))
-                d = int(st.get("selected_day", date.today().day))
-                if 1 <= m <= 12:
-                    self.current = date(y, m, 1)
-                    self.selected_day = min(max(1, d), calendar.monthrange(y, m)[1])
+        # State - recover gracefully from partial/malformed data
+        st = payload.get("state", {})
+        if isinstance(st, dict):
+            try: y = int(st.get("year", date.today().year))
+            except (TypeError, ValueError): y = date.today().year
+            try: m = int(st.get("month", date.today().month))
+            except (TypeError, ValueError): m = date.today().month
+            try: d = int(st.get("selected_day", date.today().day))
+            except (TypeError, ValueError): d = date.today().day
+            if 1 <= m <= 12:
+                self.current = date(y, m, 1)
+                self.selected_day = min(max(1, d), calendar.monthrange(y, m)[1])
 
-            geom = payload.get("window_geometry", "")
-            if geom and not self.settings.get("fullscreen_start"):
-                try: self.root.geometry(geom)
-                except: pass
-        except Exception:
-            self.settings = DEFAULT_SETTINGS.copy()
-            self.tasks = {}
-            self.current = date.today().replace(day=1)
-            self.selected_day = date.today().day
+        # Generation counter
+        self._generation = payload.get("generation", 0)
+
+        geom = payload.get("window_geometry", "")
+        if geom and not self.settings.get("fullscreen_start"):
+            try: self.root.geometry(geom)
+            except: pass
 
     def exit_app(self, event=None):
         self._save()

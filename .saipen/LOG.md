@@ -6,3 +6,22 @@
 - 18.08.26 02:00 [E-005] [SHIP] DEC: SAIPEN STATE/BOARD/LOG normalized to schema_version 3 by opencode (handoff from devin). Committed + pushed final state.
 - 18.08.26 02:30 [E-006] [HUNT] RUN: hunt sweep (6 signals) -> 2 findings: bare except:pass (zen_calendar_gpt.py), leftover .backup + 3-variant ambiguity. Tickets T-010,T-011.
 - 18.08.26 02:30 [E-007] [HUNT] DEC: STATE -> PLAN (findings logged, awaiting fix decision).
+- 20.08.26 19:57 [E-008] [AUDIT] RUN: 3-wave audit (CORE 4 tickets, SECOND WAVE 8 tickets, PERFORMANCE 4 tickets) = 20 total defects identified across v1/v2/gpt.
+- 20.08.26 19:57 [E-009] [AUDIT] DEC: All 20 audit tickets implemented by buffy agent.
+- 20.08.26 19:57 [E-010] [CORE-001] FIX: Independent load per-section in all 3 files. Tasks/settings/state parsed into separate temporaries; bad state no longer wipes tasks.
+- 20.08.26 19:57 [E-011] [CORE-002] FIX: normalize_settings() added to all 3 files. Validates types, clamps ranges, rejects malformed colors/booleans/ints per-key.
+- 20.08.26 19:57 [E-012] [CORE-003] FIX: Atomic save via tempfile.mkstemp()+os.replace() in all 3 files. Original JSON untouched on failure.
+- 20.08.26 19:57 [E-013] [CORE-004] FIX: _is_editing_focused() helper checks focus widget type; letter/arrow/space/Return bindings suppressed when in Entry/Text/Spinbox/Combobox. All 3 files.
+- 20.08.26 19:57 [E-014] [W2-001] FIX: generation counter persisted in JSON, incremented on each save, loaded at startup. All 3 files.
+- 20.08.26 19:57 [E-015] [W2-002] FIX: add_task/edit_task in v1 now check `is None` for every dialog step; Cancel aborts entire operation.
+- 20.08.26 19:57 [E-016] [W2-003] FIX: v2 tasks_container wrapped in Canvas+Scrollbar for vertical scrolling.
+- 20.08.26 19:57 [E-017] [W2-004] FIX: gpt reset_settings now calls _apply_focus_visual(False) before applying, reconciling widget layout.
+- 20.08.26 19:57 [E-018] [W2-005] FIX: v1 done tasks render with checkmark prefix + muted color; incomplete tasks keep bullet prefix.
+- 20.08.26 19:57 [E-019] [W2-006] FIX: apply_settings() builds validated candidate dict via normalize_settings() before mutating app.settings. All 3 variants.
+- 20.08.26 19:57 [E-020] [W2-007] FIX: prev_year/next_year no-op at date.min.year/date.max.year boundaries. All 3 files.
+- 20.08.26 19:57 [E-021] [W2-008] FIX: _sync_settings_vars() only called when opening/resetting settings panel, not on _refresh_all(). v2 and gpt.
+- 20.08.26 19:57 [E-022] [PERF-001] FIX: v1 _update_cell_task_count accesses info["top_right_frame"] directly instead of info.get(..., tk.Frame()) — eliminates ~2 leaked Frame widgets per day per month rebuild.
+- 20.08.26 19:57 [E-023] [PERF-002] FIX: gpt select_day updates only old/new day visuals via _update_day_visuals() + side panel; task mutations also use targeted updates. Widget identity stability verified.
+- 20.08.26 19:57 [E-024] [PERF-003] FIX: v2 _select_task updates only old/new selection indicators via _update_selection_indicator() instead of rebuilding all task rows.
+- 20.08.26 19:57 [E-025] [PERF-004] FIX: Clock ticks at next-minute boundary (60-second intervals) when showing HH:MM, 60-second intervals when hidden. All 3 files.
+- 20.08.26 19:57 [E-026] [VERIFY] RUN: All 3 files pass py_compile. Headless regression tests verify: task survival with malformed state, settings normalization, atomic save+generation, year navigation bounds, done-state checkmark.

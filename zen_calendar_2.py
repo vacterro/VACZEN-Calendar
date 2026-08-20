@@ -1,6 +1,8 @@
 import calendar
 import json
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -57,6 +59,55 @@ DEFAULT_SETTINGS = {
     "color_detail_bg": "#0f0f0f", "color_detail_fg": "#e5e5e5",
     "color_accent": "#6366f1",
 }
+
+
+def normalize_settings(raw):
+    """Validate and coerce persisted settings to safe runtime values."""
+    out = {}
+    for key, default in DEFAULT_SETTINGS.items():
+        if key not in raw:
+            continue
+        val = raw[key]
+        try:
+            if isinstance(default, bool):
+                if isinstance(val, bool):
+                    out[key] = val
+                elif isinstance(val, (int, float)):
+                    out[key] = bool(val)
+                elif isinstance(val, str) and val.lower() in ("true", "1", "yes"):
+                    out[key] = True
+                elif isinstance(val, str) and val.lower() in ("false", "0", "no"):
+                    out[key] = False
+                else:
+                    out[key] = default
+            elif isinstance(default, int):
+                iv = int(val)
+                if key == "cell_gap":
+                    out[key] = max(0, min(iv, 12))
+                elif key == "cell_padding":
+                    out[key] = max(0, min(iv, 20))
+                elif key in ("font_title_size", "font_body_size", "font_small_size",
+                             "font_day_size"):
+                    out[key] = max(6, min(iv, 72))
+                else:
+                    out[key] = iv
+            elif isinstance(default, str):
+                sv = str(val).strip()
+                if key == "lang":
+                    out[key] = sv if sv in ("ru", "en", "uk") else default
+                elif key == "theme":
+                    out[key] = sv if sv in ("dark", "light", "win95dark") else default
+                elif key.startswith("color_"):
+                    if sv.startswith("#") and len(sv) in (4, 7):
+                        out[key] = sv
+                    else:
+                        out[key] = default
+                else:
+                    out[key] = sv if sv else default
+        except (ValueError, TypeError, AttributeError):
+            out[key] = default
+    return out
+
 
 class AddTaskDialog(tk.Toplevel):
     def __init__(self, parent, settings, task=None):
@@ -216,6 +267,8 @@ class CompactCalendarApp:
         self.selected_task_idx = None
         self.show_settings_panel = False
         self._day_widgets = {}
+        self._generation = 0
+        self._draft_settings = None
 
         self._load()
         self._apply_window_mode()
@@ -332,8 +385,16 @@ class CompactCalendarApp:
         self.btn_add = ttk.Button(self.add_btn_wrap, text="+ Add task", style="Accent.TButton", command=self.add_task)
         self.btn_add.pack(fill="x")
         
-        self.tasks_container = tk.Frame(self.right, bg=self._panel_bg())
-        self.tasks_container.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        # W2-003: Make tasks container scrollable
+        self.tasks_canvas = tk.Canvas(self.right, bg=self._panel_bg(), highlightthickness=0)
+        self.tasks_scrollbar = ttk.Scrollbar(self.right, orient="vertical", command=self.tasks_canvas.yview)
+        self.tasks_container = tk.Frame(self.tasks_canvas, bg=self._panel_bg())
+        self.tasks_container.bind(
+            "<Configure>", lambda e: self.tasks_canvas.configure(scrollregion=self.tasks_canvas.bbox("all")))
+        self.tasks_canvas.create_window((0, 0), window=self.tasks_container, anchor="nw")
+        self.tasks_canvas.configure(yscrollcommand=self.tasks_scrollbar.set)
+        self.tasks_canvas.pack(side="left", fill="both", expand=True, padx=10, pady=(0, 8))
+        self.tasks_scrollbar.pack(side="right", fill="y", pady=(0, 8))
         
         self.bottom = ttk.Frame(self.root)
         self.bottom.pack(fill="x", padx=12, pady=(0, 6))
@@ -444,22 +505,32 @@ class CompactCalendarApp:
         ttk.Label(parent, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=1, padx=10)
         ttk.Combobox(parent, textvariable=variable, values=values, width=width, state="readonly").grid(row=row, column=1, sticky="w", padx=(8, 0))
 
+    def _is_editing_focused(self):
+        """Check if focus is in an editable widget that needs normal key handling."""
+        try:
+            w = self.root.focus_get()
+            if w is None:
+                return False
+            return isinstance(w, (tk.Entry, tk.Text, ttk.Spinbox, ttk.Combobox))
+        except (tk.TclError, RuntimeError):
+            return False
+
     def _bind_keys(self):
         self.root.bind("<Escape>", self.exit_app)
-        self.root.bind("<Left>", lambda e: self.prev_month())
-        self.root.bind("<Right>", lambda e: self.next_month())
-        self.root.bind("<Up>", lambda e: self.prev_year())
-        self.root.bind("<Down>", lambda e: self.next_year())
-        self.root.bind("f", lambda e: self.toggle_focus())
-        self.root.bind("a", lambda e: self.add_task())
-        self.root.bind("e", lambda e: self.edit_task())
-        self.root.bind("d", lambda e: self.delete_task())
-        self.root.bind("s", lambda e: self.save())
-        self.root.bind("<space>", lambda e: self.toggle_done())
-        self.root.bind("<Return>", lambda e: self.edit_task())
-        self.root.bind("<Control-k>", lambda e: self.toggle_settings())
-        self.root.bind("<Delete>", lambda e: self.delete_task())
-        self.root.bind("<Control-n>", lambda e: self.add_task())
+        self.root.bind("<Left>", lambda e: None if self._is_editing_focused() else self.prev_month())
+        self.root.bind("<Right>", lambda e: None if self._is_editing_focused() else self.next_month())
+        self.root.bind("<Up>", lambda e: None if self._is_editing_focused() else self.prev_year())
+        self.root.bind("<Down>", lambda e: None if self._is_editing_focused() else self.next_year())
+        self.root.bind("f", lambda e: None if self._is_editing_focused() else self.toggle_focus())
+        self.root.bind("a", lambda e: None if self._is_editing_focused() else self.add_task())
+        self.root.bind("e", lambda e: None if self._is_editing_focused() else self.edit_task())
+        self.root.bind("d", lambda e: None if self._is_editing_focused() else self.delete_task())
+        self.root.bind("s", lambda e: None if self._is_editing_focused() else self.save())
+        self.root.bind("<space>", lambda e: None if self._is_editing_focused() else self.toggle_done())
+        self.root.bind("<Return>", lambda e: None if self._is_editing_focused() else self.edit_task())
+        self.root.bind("<Control-k>", lambda e: None if self._is_editing_focused() else self.toggle_settings())
+        self.root.bind("<Delete>", lambda e: None if self._is_editing_focused() else self.delete_task())
+        self.root.bind("<Control-n>", lambda e: None if self._is_editing_focused() else self.add_task())
         self.root.bind("<MouseWheel>", self._scroll_settings)
         self.root.bind("<Button-4>", self._scroll_settings_linux)
         self.root.bind("<Button-5>", self._scroll_settings_linux)
@@ -495,7 +566,7 @@ class CompactCalendarApp:
         self._render_header()
         self._render_calendar()
         self._render_side()
-        self._sync_settings_vars()
+        # W2-008: Only sync settings vars when panel is freshly opened/reset, not on every refresh
         self._apply_focus_visual(self.settings.get("focus_mode", False))
         if self.show_settings_panel: self._show_settings_panel()
         else: self.settings_panel.place_forget()
@@ -739,8 +810,29 @@ class CompactCalendarApp:
             note_preview.bind("<Double-Button-1>", lambda e, i=idx: self._edit_task_by_idx(i))
 
     def _select_task(self, idx):
+        # PERF-003: Update only the selection indicators, not the entire task list
+        old_idx = self.selected_task_idx
         self.selected_task_idx = idx
-        self._render_side()
+        if old_idx is not None and old_idx != idx:
+            # Update just the selection visual indicators for old and new
+            self._update_selection_indicator(old_idx, False)
+            self._update_selection_indicator(idx, True)
+        elif old_idx is None:
+            self._update_selection_indicator(idx, True)
+
+    def _update_selection_indicator(self, idx, selected):
+        """Update only the selection indicator color for a task row."""
+        children = self.tasks_container.winfo_children()
+        if idx < 0 or idx >= len(children):
+            return
+        row = children[idx]
+        accent = self._accent()
+        # The first child of each row is the indicator frame
+        indicator = row.winfo_children()[0] if row.winfo_children() else None
+        if indicator:
+            color = accent if selected else "#444444"
+            try: indicator.configure(bg=color)
+            except tk.TclError: pass
 
     def _edit_task_by_idx(self, idx):
         key = self._task_key()
@@ -829,8 +921,11 @@ class CompactCalendarApp:
 
     def toggle_settings(self):
         self.show_settings_panel = not self.show_settings_panel
-        if self.show_settings_panel: self._show_settings_panel()
-        else: self.settings_panel.place_forget()
+        if self.show_settings_panel:
+            self._sync_settings_vars()  # W2-008: sync draft only when opening
+            self._show_settings_panel()
+        else:
+            self.settings_panel.place_forget()
 
     def _show_settings_panel(self):
         w = 420
@@ -850,6 +945,7 @@ class CompactCalendarApp:
             self.apply_settings(silent=True)
 
     def _sync_settings_vars(self):
+        """Sync controls from committed settings. Only called when opening/resetting the panel."""
         self.var_fullscreen.set(self.settings.get("fullscreen_start", True))
         self.var_topmost.set(self.settings.get("always_on_top", True))
         self.var_week_monday.set(self.settings.get("week_start_monday", True))
@@ -870,21 +966,28 @@ class CompactCalendarApp:
             except tk.TclError: pass
 
     def apply_settings(self, silent=False):
-        self.settings["fullscreen_start"] = bool(self.var_fullscreen.get())
-        self.settings["always_on_top"] = bool(self.var_topmost.get())
-        self.settings["week_start_monday"] = bool(self.var_week_monday.get())
-        self.settings["show_week_numbers"] = bool(self.var_weeknums.get())
-        self.settings["show_clock"] = bool(self.var_clock.get())
-        self.settings["focus_mode"] = bool(self.var_focus.get())
-        self.settings["cell_gap"] = max(0, int(self.var_gap.get()))
-        self.settings["cell_padding"] = max(0, int(self.var_pad.get()))
-        self.settings["font_family"] = str(self.var_font_family.get()).strip() or DEFAULT_SETTINGS["font_family"]
-        self.settings["font_mono"] = str(self.var_font_mono.get()).strip() or DEFAULT_SETTINGS["font_mono"]
-        self.settings["font_title_size"] = max(8, int(self.var_title_size.get()))
-        self.settings["font_body_size"] = max(6, int(self.var_body_size.get()))
-        self.settings["font_small_size"] = max(6, int(self.var_small_size.get()))
-        self.settings["font_day_size"] = max(6, int(self.var_day_size.get()))
-        self.settings["font_day_bold"] = bool(self.var_day_bold.get())
+        # W2-006: Validate all settings into a temporary candidate before committing
+        candidate = self.settings.copy()
+        raw = {
+            "fullscreen_start": bool(self.var_fullscreen.get()),
+            "always_on_top": bool(self.var_topmost.get()),
+            "week_start_monday": bool(self.var_week_monday.get()),
+            "show_week_numbers": bool(self.var_weeknums.get()),
+            "show_clock": bool(self.var_clock.get()),
+            "focus_mode": bool(self.var_focus.get()),
+            "cell_gap": self.var_gap.get(),
+            "cell_padding": self.var_pad.get(),
+            "font_family": self.var_font_family.get(),
+            "font_mono": self.var_font_mono.get(),
+            "font_title_size": self.var_title_size.get(),
+            "font_body_size": self.var_body_size.get(),
+            "font_small_size": self.var_small_size.get(),
+            "font_day_size": self.var_day_size.get(),
+            "font_day_bold": bool(self.var_day_bold.get()),
+        }
+        validated = normalize_settings(raw)
+        candidate.update(validated)
+        self.settings = candidate
         self.root.attributes("-topmost", self.settings["always_on_top"])
         self.root.attributes("-fullscreen", self.settings["fullscreen_start"])
         self._build_style()
@@ -894,6 +997,7 @@ class CompactCalendarApp:
 
     def reset_settings(self):
         self.settings = DEFAULT_SETTINGS.copy()
+        # W2-008: Re-sync controls after reset so the draft reflects defaults
         self._sync_settings_vars()
         self.apply_settings()
 
@@ -915,6 +1019,7 @@ class CompactCalendarApp:
 
     def prev_year(self):
         y = self.current.year - 1
+        if y < date.min.year: return
         m = self.current.month
         self.current = date(y, m, 1)
         self.selected_day = min(self.selected_day, calendar.monthrange(y, m)[1])
@@ -922,6 +1027,7 @@ class CompactCalendarApp:
 
     def next_year(self):
         y = self.current.year + 1
+        if y > date.max.year: return
         m = self.current.month
         self.current = date(y, m, 1)
         self.selected_day = min(self.selected_day, calendar.monthrange(y, m)[1])
@@ -935,10 +1041,13 @@ class CompactCalendarApp:
 
     def _tick_clock(self):
         if self.settings.get("show_clock", True):
-            self.clock_lbl.config(text=datetime.now().strftime("%H:%M"))
+            now = datetime.now()
+            self.clock_lbl.config(text=now.strftime("%H:%M"))
+            delay_ms = (60 - now.second) * 1000
         else:
             self.clock_lbl.config(text="")
-        self.root.after(1000, self._tick_clock)
+            delay_ms = 60_000
+        self.root.after(delay_ms, self._tick_clock)
 
     def save(self):
         self._save()
@@ -946,6 +1055,7 @@ class CompactCalendarApp:
     def _save(self):
         try: geom = self.root.geometry()
         except tk.TclError: geom = ""
+        self._generation += 1
         payload = {
             "settings": self.settings,
             "tasks": {k: [t.to_dict() for t in v] for k, v in self.tasks.items()},
@@ -955,48 +1065,65 @@ class CompactCalendarApp:
                 "selected_day": self.selected_day,
             },
             "window_geometry": geom,
+            "generation": self._generation,
         }
+        # CORE-003 + W2-001: Atomic write via temp file + rename
         try:
             DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-            DATA_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(DATA_PATH.parent), prefix=".cal_tmp_", suffix=".json"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, str(DATA_PATH))
+            except Exception:
+                try: os.unlink(tmp_path)
+                except OSError: pass
         except (OSError, TypeError, ValueError):
             pass
 
     def _load(self):
         if not DATA_PATH.exists(): return
-        try:
-            payload = json.loads(DATA_PATH.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict): return
-            settings = payload.get("settings", {})
-            if isinstance(settings, dict): self.settings.update(settings)
-            
-            raw_tasks = payload.get("tasks", {})
-            if isinstance(raw_tasks, dict):
-                loaded_tasks = {}
-                for k, v in raw_tasks.items():
-                    if not isinstance(k, str): continue
-                    if not isinstance(v, list): continue
-                    loaded_tasks[k] = [CalendarTask.from_dict(x) for x in v if isinstance(x, dict)]
-                self.tasks = loaded_tasks
-
-            st = payload.get("state", {})
-            if isinstance(st, dict):
-                y = int(st.get("year", date.today().year))
-                m = int(st.get("month", date.today().month))
-                d = int(st.get("selected_day", date.today().day))
-                if 1 <= m <= 12:
-                    self.current = date(y, m, 1)
-                    self.selected_day = min(max(1, d), calendar.monthrange(y, m)[1])
-            
-            geom = payload.get("window_geometry", "")
-            if geom and not self.settings.get("fullscreen_start"):
-                try: self.root.geometry(geom)
-                except tk.TclError: pass
-        except Exception:
-            self.settings = DEFAULT_SETTINGS.copy()
-            self.tasks = {}
-            self.current = date.today().replace(day=1)
-            self.selected_day = date.today().day
+        raw_text = None
+        try: raw_text = DATA_PATH.read_text(encoding="utf-8")
+        except OSError: return
+        payload = None
+        try: payload = json.loads(raw_text)
+        except (json.JSONDecodeError, ValueError): return
+        if not isinstance(payload, dict): return
+        # CORE-001 + CORE-002: Parse each section independently
+        raw_settings = payload.get("settings", {})
+        if isinstance(raw_settings, dict):
+            new_settings = normalize_settings(raw_settings)
+            if new_settings:
+                for k, v in new_settings.items():
+                    if k in DEFAULT_SETTINGS:
+                        self.settings[k] = v
+        raw_tasks = payload.get("tasks", {})
+        if isinstance(raw_tasks, dict):
+            loaded_tasks = {}
+            for k, v in raw_tasks.items():
+                if not isinstance(k, str): continue
+                if not isinstance(v, list): continue
+                loaded_tasks[k] = [CalendarTask.from_dict(x) for x in v if isinstance(x, dict)]
+            self.tasks = loaded_tasks
+        st = payload.get("state", {})
+        if isinstance(st, dict):
+            try: y = int(st.get("year", date.today().year))
+            except (TypeError, ValueError): y = date.today().year
+            try: m = int(st.get("month", date.today().month))
+            except (TypeError, ValueError): m = date.today().month
+            try: d = int(st.get("selected_day", date.today().day))
+            except (TypeError, ValueError): d = date.today().day
+            if 1 <= m <= 12:
+                self.current = date(y, m, 1)
+                self.selected_day = min(max(1, d), calendar.monthrange(y, m)[1])
+        self._generation = payload.get("generation", 0)
+        geom = payload.get("window_geometry", "")
+        if geom and not self.settings.get("fullscreen_start"):
+            try: self.root.geometry(geom)
+            except tk.TclError: pass
 
     def exit_app(self, event=None):
         self._save()
