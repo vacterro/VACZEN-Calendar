@@ -1,27 +1,194 @@
 # Log
-- 18.08.26 00:00 [E-001] [INIT] DEC: Created SAIPEN state for VACZEN Calendar GitHub push. Fresh project, no prior state.
-- 18.08.26 00:00 [E-002] [T-001,T-002,T-003] BUILD: README.md + translations (EN/RU/ET) created, version set to 0.0.1 in zen_calendar_1.py, zen_calendar_2.py, zen_calendar_gpt.py.
-- 18.08.26 00:00 [E-003] [T-004,T-005] RUN: Git remote added, pushed to https://github.com/vacterro/VACZEN-Calendar.
-- 18.08.26 00:00 [E-004] [T-006,T-007,T-008,T-009] BUILD: LICENSE, .gitignore, CONTRIBUTING.md added. Badges added. Pushed to GitHub.
-- 18.08.26 02:00 [E-005] [SHIP] DEC: SAIPEN STATE/BOARD/LOG normalized to schema_version 3 by opencode (handoff from devin). Committed + pushed final state.
-- 18.08.26 02:30 [E-006] [HUNT] RUN: hunt sweep (6 signals) -> 2 findings: bare except:pass (zen_calendar_gpt.py), leftover .backup + 3-variant ambiguity. Tickets T-010,T-011.
-- 18.08.26 02:30 [E-007] [HUNT] DEC: STATE -> PLAN (findings logged, awaiting fix decision).
-- 20.08.26 19:57 [E-008] [AUDIT] RUN: 3-wave audit (CORE 4 tickets, SECOND WAVE 8 tickets, PERFORMANCE 4 tickets) = 20 total defects identified across v1/v2/gpt.
-- 20.08.26 19:57 [E-009] [AUDIT] DEC: All 20 audit tickets implemented by buffy agent.
-- 20.08.26 19:57 [E-010] [CORE-001] FIX: Independent load per-section in all 3 files. Tasks/settings/state parsed into separate temporaries; bad state no longer wipes tasks.
-- 20.08.26 19:57 [E-011] [CORE-002] FIX: normalize_settings() added to all 3 files. Validates types, clamps ranges, rejects malformed colors/booleans/ints per-key.
-- 20.08.26 19:57 [E-012] [CORE-003] FIX: Atomic save via tempfile.mkstemp()+os.replace() in all 3 files. Original JSON untouched on failure.
-- 20.08.26 19:57 [E-013] [CORE-004] FIX: _is_editing_focused() helper checks focus widget type; letter/arrow/space/Return bindings suppressed when in Entry/Text/Spinbox/Combobox. All 3 files.
-- 20.08.26 19:57 [E-014] [W2-001] FIX: generation counter persisted in JSON, incremented on each save, loaded at startup. All 3 files.
-- 20.08.26 19:57 [E-015] [W2-002] FIX: add_task/edit_task in v1 now check `is None` for every dialog step; Cancel aborts entire operation.
-- 20.08.26 19:57 [E-016] [W2-003] FIX: v2 tasks_container wrapped in Canvas+Scrollbar for vertical scrolling.
-- 20.08.26 19:57 [E-017] [W2-004] FIX: gpt reset_settings now calls _apply_focus_visual(False) before applying, reconciling widget layout.
-- 20.08.26 19:57 [E-018] [W2-005] FIX: v1 done tasks render with checkmark prefix + muted color; incomplete tasks keep bullet prefix.
-- 20.08.26 19:57 [E-019] [W2-006] FIX: apply_settings() builds validated candidate dict via normalize_settings() before mutating app.settings. All 3 variants.
-- 20.08.26 19:57 [E-020] [W2-007] FIX: prev_year/next_year no-op at date.min.year/date.max.year boundaries. All 3 files.
-- 20.08.26 19:57 [E-021] [W2-008] FIX: _sync_settings_vars() only called when opening/resetting settings panel, not on _refresh_all(). v2 and gpt.
-- 20.08.26 19:57 [E-022] [PERF-001] FIX: v1 _update_cell_task_count accesses info["top_right_frame"] directly instead of info.get(..., tk.Frame()) — eliminates ~2 leaked Frame widgets per day per month rebuild.
-- 20.08.26 19:57 [E-023] [PERF-002] FIX: gpt select_day updates only old/new day visuals via _update_day_visuals() + side panel; task mutations also use targeted updates. Widget identity stability verified.
-- 20.08.26 19:57 [E-024] [PERF-003] FIX: v2 _select_task updates only old/new selection indicators via _update_selection_indicator() instead of rebuilding all task rows.
-- 20.08.26 19:57 [E-025] [PERF-004] FIX: Clock ticks at next-minute boundary (60-second intervals) when showing HH:MM, 60-second intervals when hidden. All 3 files.
-- 20.08.26 19:57 [E-026] [VERIFY] RUN: All 3 files pass py_compile. Headless regression tests verify: task survival with malformed state, settings normalization, atomic save+generation, year navigation bounds, done-state checkmark.
+
+- 22.08.26 23:48 [E-001] DEC: bootstrap SAIPEN for _VACZEN_CALENDAR -- agent opencode, mode full, root bound via git toplevel
+- 22.08.26 23:56 [E-002] [parent: E-001] RUN: prepare saiwiki -> done
+- 22.08.26 23:59 [E-003] [parent: E-002] RUN: validate.py -> PASS
+- 28.08.26 04:43 [E-4] [parent: E-3] [agent: opencode] [op: goal-entry-3148e737a1be41fb952b358a0aa9d12d] DEC: goal pivot -- Implement 18 audit findings from SRC-001 (3 waves: 7 CORE + 6 W2 + 5 PERF fixes) in ZEN_CALENDAR.py
+- 28.08.26 04:43 [E-5] [parent: E-4] [agent: opencode] [op: goal-entry-3148e737a1be41fb952b358a0aa9d12d] DEC: goal_waves 0->1
+- 28.08.26 04:44 [E-6] [parent: E-5] [T-1] [agent: opencode] [op: transition-8162bd750de74af59e2287e98825e0f7] RUN: transition to SCOUT
+- 28.08.26 04:46 [E-7] [parent: E-6] [T-2] [agent: opencode] [op: ticket-59a5a1cf3ec248b9bd191e8f2cf1fb01] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-8] [parent: E-7] [T-3] [agent: opencode] [op: ticket-1eb867df0c0c4b0687e2c9f143e07b99] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-9] [parent: E-8] [T-4] [agent: opencode] [op: ticket-0f6c424ff7d442f1a60459ad906e3af7] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-10] [parent: E-9] [T-5] [agent: opencode] [op: ticket-7536bed72e2b4c0790dc9ea96f8030eb] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-11] [parent: E-10] [T-6] [agent: opencode] [op: ticket-40fa517a7a4141ffadd3b3bdda61b829] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-12] [parent: E-11] [T-7] [agent: opencode] [op: ticket-fc7d7990eddd4f4ca76946dd78af09cc] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-13] [parent: E-12] [T-8] [agent: opencode] [op: ticket-fbacba0c71c9486d8dd523fe73e64666] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-14] [parent: E-13] [T-9] [agent: opencode] [op: ticket-bcd142f8368a42ad93e5a10c45b7c727] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-15] [parent: E-14] [T-10] [agent: opencode] [op: ticket-b6028c7622d24e84a4202f006eaf7cfb] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-16] [parent: E-15] [T-11] [agent: opencode] [op: ticket-6687350bc8b94971b98d9b0221c51241] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-17] [parent: E-16] [T-12] [agent: opencode] [op: ticket-c1aeaa8442bb4c75929bd35215027a65] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-18] [parent: E-17] [T-13] [agent: opencode] [op: ticket-f33603871c1b4b1599859b6e0f5130f0] DEC: ticket added via SAIOPS
+- 28.08.26 04:46 [E-19] [parent: E-18] [T-14] [agent: opencode] [op: ticket-32eab4c8424e4b3d8a02df1e2db70c22] DEC: ticket added via SAIOPS
+- 28.08.26 04:47 [E-20] [parent: E-19] [T-15] [agent: opencode] [op: ticket-527e23e5ce1b4800a6a60ddb08ba2db3] DEC: ticket added via SAIOPS
+- 28.08.26 04:47 [E-21] [parent: E-20] [T-16] [agent: opencode] [op: ticket-ebaf856a9c254fb1aa3186bbdf69c73c] DEC: ticket added via SAIOPS
+- 28.08.26 04:47 [E-22] [parent: E-21] [T-17] [agent: opencode] [op: ticket-5d9555c2bafd48f5a035c4451c950dc2] DEC: ticket added via SAIOPS
+- 28.08.26 04:47 [E-23] [parent: E-22] [T-18] [agent: opencode] [op: ticket-c26ce8fc34fb43b1bf37424dc3e511fb] DEC: ticket added via SAIOPS
+- 28.08.26 04:47 [E-24] [parent: E-23] [T-19] [agent: opencode] [op: ticket-f077ac1261984ca19616c923e3fe6c15] DEC: ticket added via SAIOPS
+- 28.08.26 04:49 [E-25] [parent: E-24] [T-2] [agent: opencode] [op: claim-bd14380a3b5b4388bb018a4aaa1b88fa] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 04:49 [E-26] [parent: E-25] [T-2] [agent: opencode] [op: transition-c340591ba2b84b2cb10c4d91ef64c177] RUN: transition to SCOUT
+- 28.08.26 04:50 [E-27] [parent: E-26] [T-2] [agent: opencode] [op: transition-7f634242958341e2868738b3d25214e1] RUN: transition to BUILD
+- 28.08.26 04:50 [E-28] [parent: E-27] [T-2] [agent: opencode] [op: transition-121f9218d202460dae838eff074946b2] RUN: transition to VERIFY
+- 28.08.26 04:51 [E-29] [parent: E-28] [T-2] [agent: opencode] [op: checkpoint-9a1c87bea3eb4a4895666f0ff8b7d523] RUN: verify: py_compile PASS; def _load count=1; def exit_app count=1
+- 28.08.26 04:52 [E-30] [parent: E-29] [T-2] [agent: opencode] [op: checkpoint-ebdac5909e774be8ab651126e5353563] RUN: validate: py_compile PASS; def _load count=1; def exit_app count=1; PASS conf: high
+- 28.08.26 04:52 [E-31] [parent: E-30] [T-2] [agent: opencode] [op: transition-a1086f26b4884d7baa0a01357d4e705c] RUN: transition to REVIEW
+- 28.08.26 04:52 [E-32] [parent: E-31] [op: transition-a1086f26b4884d7baa0a01357d4e705c] DEC: goal_tickets 0->1
+- 28.08.26 04:52 [E-33] [parent: E-32] [T-2] [agent: opencode] [op: transition-6b9329382be54850b3f26af6fe2c849c] RUN: transition to SHIP
+- 28.08.26 04:52 [E-34] [parent: E-33] [T-2] [agent: opencode] [op: finish-cfe3c863ea2c4fd982309153b3f8fdfe] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 04:54 [E-35] [parent: E-34] [T-3] [agent: opencode] [op: claim-0db6da828c3c4579881cd47caee35cbf] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 04:54 [E-36] [parent: E-35] [T-3] [agent: opencode] [op: transition-710070852fa94ae2ade4df63c48693c0] RUN: transition to SCOUT
+- 28.08.26 04:54 [E-37] [parent: E-36] [T-3] [agent: opencode] [op: transition-8fbb263b77eb49419ef32526bf10bf0f] RUN: transition to BUILD
+- 28.08.26 04:54 [E-38] [parent: E-37] [T-3] [agent: opencode] [op: transition-e35a04c1756443b39e6f9dffe5e072c0] RUN: transition to VERIFY
+- 28.08.26 04:54 [E-39] [parent: E-38] [T-3] [agent: opencode] [op: checkpoint-7208164c278141a4bd5025e6981d2705] RUN: regression_core_002.py: 2 tests PASS conf: high
+- 28.08.26 04:54 [E-40] [parent: E-39] [T-3] [agent: opencode] [op: transition-fea481702f8843528fc800e3eb1cf21e] RUN: transition to REVIEW
+- 28.08.26 04:54 [E-41] [parent: E-40] [op: transition-fea481702f8843528fc800e3eb1cf21e] DEC: goal_tickets 1->2
+- 28.08.26 04:54 [E-42] [parent: E-41] [T-3] [agent: opencode] [op: transition-07bfe19e215343c6823b7771c4d6b77c] RUN: transition to SHIP
+- 28.08.26 04:54 [E-43] [parent: E-42] [T-3] [agent: opencode] [op: finish-df65dced5d5b4e0e832493f7c8b5f381] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 05:01 [E-44] [parent: E-43] [T-4] [agent: opencode] [op: claim-aa3f84c11e35418aa7b8fe684c54d901] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 05:01 [E-45] [parent: E-44] [T-4] [agent: opencode] [op: transition-ae9ebf173f594e83bfd2d8f1ddc1ecf8] RUN: transition to SCOUT
+- 28.08.26 05:01 [E-46] [parent: E-45] [T-4] [agent: opencode] [op: transition-d74947b36ab240a6a77aa12822f6ee48] RUN: transition to BUILD
+- 28.08.26 05:01 [E-47] [parent: E-46] [T-4] [agent: opencode] [op: transition-7dd2290adf834906ac7817d87663629f] RUN: transition to VERIFY
+- 28.08.26 05:01 [E-48] [parent: E-47] [T-4] [agent: opencode] [op: checkpoint-f6c7c113a8514c92a2ce1d07d67a81f1] RUN: regression_core_003_005.py: 4 tests PASS conf: high
+- 28.08.26 05:01 [E-49] [parent: E-48] [T-4] [agent: opencode] [op: transition-d88c7b32821746809d99faa76ceb6a16] RUN: transition to REVIEW
+- 28.08.26 05:01 [E-50] [parent: E-49] [op: transition-d88c7b32821746809d99faa76ceb6a16] DEC: goal_tickets 2->3
+- 28.08.26 05:01 [E-51] [parent: E-50] [T-4] [agent: opencode] [op: transition-4360d888166c4d8380193d1a10c62935] RUN: transition to SHIP
+- 28.08.26 05:01 [E-52] [parent: E-51] [T-4] [agent: opencode] [op: finish-771760cebbac471484f755fa224efeea] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 05:01 [E-53] [parent: E-52] [T-5] [agent: opencode] [op: claim-5562d80606984783af291eb9962fa768] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 05:01 [E-54] [parent: E-53] [T-5] [agent: opencode] [op: transition-78690ab06a134cc5bda42b3b9ce7459e] RUN: transition to SCOUT
+- 28.08.26 05:01 [E-55] [parent: E-54] [T-5] [agent: opencode] [op: transition-7cbeca3a43b7463d85a1b10c89ed51f2] RUN: transition to BUILD
+- 28.08.26 05:01 [E-56] [parent: E-55] [T-5] [agent: opencode] [op: transition-24b6e591567147baa7def87f052ccf32] RUN: transition to VERIFY
+- 28.08.26 05:01 [E-57] [parent: E-56] [T-5] [agent: opencode] [op: checkpoint-2feb701485bf4ed59d1d26c74f837e9a] RUN: regression_core_004_006.py: 3 Core004 tests PASS conf: high
+- 28.08.26 05:01 [E-58] [parent: E-57] [T-5] [agent: opencode] [op: transition-c95ba4a813794501adee476e565e6e4a] RUN: transition to REVIEW
+- 28.08.26 05:01 [E-59] [parent: E-58] [op: transition-c95ba4a813794501adee476e565e6e4a] DEC: goal_tickets 3->4
+- 28.08.26 05:01 [E-60] [parent: E-59] [T-5] [agent: opencode] [op: transition-11122dd0e60246e6a60e7158ff79ec94] RUN: transition to SHIP
+- 28.08.26 05:01 [E-61] [parent: E-60] [T-5] [agent: opencode] [op: finish-3beca648ef4c4758b3b474734462c078] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 05:01 [E-62] [parent: E-61] [T-6] [agent: opencode] [op: claim-50d165a7eb0641e19044647109ace414] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 05:01 [E-63] [parent: E-62] [T-6] [agent: opencode] [op: transition-5710980f469c48438f3418f0bc5df346] RUN: transition to SCOUT
+- 28.08.26 05:01 [E-64] [parent: E-63] [T-6] [agent: opencode] [op: transition-c2e207ca3ff442189263cb7857623137] RUN: transition to BUILD
+- 28.08.26 05:01 [E-65] [parent: E-64] [T-6] [agent: opencode] [op: transition-9d3b3836e11140fc90bc0b24311221b8] RUN: transition to VERIFY
+- 28.08.26 05:01 [E-66] [parent: E-65] [T-6] [agent: opencode] [op: checkpoint-0e0195a5e9d5444dac731ff545ceaaa7] RUN: regression_core_003_005.py: 1 Core005 test PASS conf: high
+- 28.08.26 05:01 [E-67] [parent: E-66] [T-6] [agent: opencode] [op: transition-dd5002d9ed2f47018b96eeaa524d937b] RUN: transition to REVIEW
+- 28.08.26 05:01 [E-68] [parent: E-67] [op: transition-dd5002d9ed2f47018b96eeaa524d937b] DEC: goal_tickets 4->5
+- 28.08.26 05:01 [E-69] [parent: E-68] [T-6] [agent: opencode] [op: transition-73b8541e18e144629b692484c2c33452] RUN: transition to SHIP
+- 28.08.26 05:01 [E-70] [parent: E-69] [T-6] [agent: opencode] [op: finish-b974d58a86704300b1f8fb7f68e56262] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 05:01 [E-71] [parent: E-70] [T-7] [agent: opencode] [op: claim-9ac9948d1cde49e7a30960f309b3648f] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 05:01 [E-72] [parent: E-71] [T-7] [agent: opencode] [op: transition-06865d254c5a43a4b0ce2303e996680d] RUN: transition to SCOUT
+- 28.08.26 05:01 [E-73] [parent: E-72] [T-7] [agent: opencode] [op: transition-21693ed95fb844d2b53d5241a00a0c77] RUN: transition to BUILD
+- 28.08.26 05:01 [E-74] [parent: E-73] [T-7] [agent: opencode] [op: transition-12da00f0e4ea4fb48edc6ef028eef54b] RUN: transition to VERIFY
+- 28.08.26 05:01 [E-75] [parent: E-74] [T-7] [agent: opencode] [op: checkpoint-b8f8a628d0d347c98f5fa29824710812] RUN: regression_core_004_006.py: 2 Core006 tests PASS conf: high
+- 28.08.26 05:01 [E-76] [parent: E-75] [T-7] [agent: opencode] [op: transition-d8290f984ce14dffa136db469e5ee3d9] RUN: transition to REVIEW
+- 28.08.26 05:01 [E-77] [parent: E-76] [op: transition-d8290f984ce14dffa136db469e5ee3d9] DEC: goal_tickets 5->6
+- 28.08.26 05:01 [E-78] [parent: E-77] [T-7] [agent: opencode] [op: transition-e295fe37f82d42779098b9c276d37ed6] RUN: transition to SHIP
+- 28.08.26 05:01 [E-79] [parent: E-78] [T-7] [agent: opencode] [op: finish-16ced9ad2a5a4808bb93581d1d8b88f9] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 07:00 [E-80] [parent: E-79] [T-8] [agent: opencode] [op: claim-463610381d1e46c1971c74b4986a93bc] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 07:00 [E-81] [parent: E-80] [T-8] [agent: opencode] [op: transition-cd6f6052e0ee473b8abd7fb2b119291c] RUN: transition to SCOUT
+- 28.08.26 07:00 [E-82] [parent: E-81] [T-8] [agent: opencode] [op: transition-c78a47f0fd4f472ebbb68359f565f491] RUN: transition to BUILD
+- 28.08.26 07:00 [E-83] [parent: E-82] [T-8] [agent: opencode] [op: transition-dceb96d9a2fe4278bb8e1b20b44c3be2] RUN: transition to VERIFY
+- 28.08.26 07:00 [E-84] [parent: E-83] [T-8] [agent: opencode] [op: checkpoint-9e4b8b94591d42a597a6552d07ebb6f2] RUN: docs: 7 files rewrote symbol-centered; no line numbers; data-model now reflects UnreadableDataFile, _save_lock, generation-on-commit, _apply_state; canonical-ids mirrors live markers; settings/ui/keyboard/overview updated to current code
+- 28.08.26 07:01 [E-85] [parent: E-84] [T-8] [agent: opencode] [op: checkpoint-af183ea97cdc4937933e1633b78e9025] RUN: docs verify: all 7 docs symbol-centered, no stale line counts, persistence semantics match source; PASS conf: high
+- 28.08.26 07:01 [E-86] [parent: E-85] [T-8] [agent: opencode] [op: transition-1415eff6ad1d432ab487183ad40c5535] RUN: transition to REVIEW
+- 28.08.26 07:01 [E-87] [parent: E-86] [op: transition-1415eff6ad1d432ab487183ad40c5535] DEC: goal_tickets 6->7
+- 28.08.26 07:01 [E-88] [parent: E-87] [T-8] [agent: opencode] [op: transition-5d7c7d0cbf1e4b75b0ba28945d3d45a0] RUN: transition to SHIP
+- 28.08.26 07:01 [E-89] [parent: E-88] [T-8] [agent: opencode] [op: finish-e806d7dd6ea744ac98367a14fe25d7df] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 07:53 [E-90] [parent: E-89] [T-9] [agent: opencode] [op: claim-f89db6a473dc4b72a95e59a41482ea28] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 07:53 [E-91] [parent: E-90] [T-9] [agent: opencode] [op: transition-46d08757716346f6886359e49349f92d] RUN: transition to SCOUT
+- 28.08.26 07:53 [E-92] [parent: E-91] [T-9] [agent: opencode] [op: transition-de64fa49246c415695c47364596912c9] RUN: transition to BUILD
+- 28.08.26 07:53 [E-93] [parent: E-92] [T-9] [agent: opencode] [op: transition-c8e04e17861b49dc8cebea49c0894aaf] RUN: transition to VERIFY
+- 28.08.26 07:53 [E-94] [parent: E-93] [T-9] [agent: opencode] [op: checkpoint-a0ded64aa52a4913928fb76241aed4e7] RUN: regression_w2.py: W2-001 set-intersection PASS conf: high
+- 28.08.26 07:53 [E-95] [parent: E-94] [T-9] [agent: opencode] [op: transition-f8d29e6325b247a780fe8a786b518679] RUN: transition to REVIEW
+- 28.08.26 07:53 [E-96] [parent: E-95] [op: transition-f8d29e6325b247a780fe8a786b518679] DEC: goal_tickets 7->8
+- 28.08.26 07:53 [E-97] [parent: E-96] [T-9] [agent: opencode] [op: transition-936b8cf337044746869021a2ac0cea4c] RUN: transition to SHIP
+- 28.08.26 07:53 [E-98] [parent: E-97] [T-9] [agent: opencode] [op: finish-15bcb91d762c4411b12300686413abd7] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 07:53 [E-99] [parent: E-98] [T-10] [agent: opencode] [op: claim-aaa9537e2ba64428834409bd9c1dc4af] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 07:53 [E-100] [parent: E-99] [T-10] [agent: opencode] [op: transition-d276614cc4af44998b6351c81a35f491] RUN: transition to SCOUT
+- 28.08.26 07:53 [E-101] [parent: E-100] [T-10] [agent: opencode] [op: transition-fedaccf79aea4b128db18f0d20036daf] RUN: transition to BUILD
+- 28.08.26 07:53 [E-102] [parent: E-101] [T-10] [agent: opencode] [op: transition-2116d5134b984d899cf390cafef15000] RUN: transition to VERIFY
+- 28.08.26 07:53 [E-103] [parent: E-102] [T-10] [agent: opencode] [op: checkpoint-c998352a4d6d4d7a962a10922b53ea2c] RUN: regression_w2.py: W2-002 editor guards PASS conf: high
+- 28.08.26 07:53 [E-104] [parent: E-103] [T-10] [agent: opencode] [op: transition-8c370e90eb4f4a95a3843953f643a1b9] RUN: transition to REVIEW
+- 28.08.26 07:53 [E-105] [parent: E-104] [op: transition-8c370e90eb4f4a95a3843953f643a1b9] DEC: goal_tickets 8->9
+- 28.08.26 07:53 [E-106] [parent: E-105] [T-10] [agent: opencode] [op: transition-841d18f15761427481e0567efc6ff745] RUN: transition to SHIP
+- 28.08.26 07:53 [E-107] [parent: E-106] [T-10] [agent: opencode] [op: finish-5fbc1989da3b4bae942dd5b8962789a3] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 07:53 [E-108] [parent: E-107] [T-11] [agent: opencode] [op: claim-02fbe777ddce43d690e03344e37350f2] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 07:53 [E-109] [parent: E-108] [T-11] [agent: opencode] [op: transition-bcf39ccd5f1e416c9ef0b21cb76a5dbf] RUN: transition to SCOUT
+- 28.08.26 07:53 [E-110] [parent: E-109] [T-11] [agent: opencode] [op: transition-d54a7127309e4427b5613f7ede24ad98] RUN: transition to BUILD
+- 28.08.26 07:53 [E-111] [parent: E-110] [T-11] [agent: opencode] [op: transition-7cc1d926348b444987fcc1e5c0fa180d] RUN: transition to VERIFY
+- 28.08.26 07:53 [E-112] [parent: E-111] [T-11] [agent: opencode] [op: checkpoint-14811cd04d114692af1b78e6576593f8] RUN: regression_w2.py: W2-003 task-key canonicalization PASS conf: high
+- 28.08.26 07:53 [E-113] [parent: E-112] [T-11] [agent: opencode] [op: transition-1aca233e52ec40a2adff387fe474a6f4] RUN: transition to REVIEW
+- 28.08.26 07:53 [E-114] [parent: E-113] [op: transition-1aca233e52ec40a2adff387fe474a6f4] DEC: goal_tickets 9->10
+- 28.08.26 07:53 [E-115] [parent: E-114] [T-11] [agent: opencode] [op: transition-ea9ada2054c24a52b071499aae7f4356] RUN: transition to SHIP
+- 28.08.26 07:53 [E-116] [parent: E-115] [T-11] [agent: opencode] [op: finish-b593c8bd553342c5a05e6dadfbe1b3e0] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 07:53 [E-117] [parent: E-116] [T-12] [agent: opencode] [op: claim-d425e77af1664dc5aef884bcf0b5df05] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 07:53 [E-118] [parent: E-117] [T-12] [agent: opencode] [op: transition-fb76a8cd43824c988e268e24cb10c85c] RUN: transition to SCOUT
+- 28.08.26 07:53 [E-119] [parent: E-118] [T-12] [agent: opencode] [op: transition-c155214e2a114f25bf74659e549837b4] RUN: transition to BUILD
+- 28.08.26 07:53 [E-120] [parent: E-119] [T-12] [agent: opencode] [op: transition-6c145530f27c4738895a33af0a4ae24b] RUN: transition to VERIFY
+- 28.08.26 07:53 [E-121] [parent: E-120] [T-12] [agent: opencode] [op: checkpoint-6b4e81e640fc4e2cab72bce188d7922b] RUN: regression_w2.py: W2-004 surrogate sanitizer PASS conf: high
+- 28.08.26 07:53 [E-122] [parent: E-121] [T-12] [agent: opencode] [op: transition-90859060bd5746ef9ca2f2b6b9b14632] RUN: transition to REVIEW
+- 28.08.26 07:53 [E-123] [parent: E-122] [op: transition-90859060bd5746ef9ca2f2b6b9b14632] DEC: goal_tickets 10->11
+- 28.08.26 07:53 [E-124] [parent: E-123] [T-12] [agent: opencode] [op: transition-06d5955195ef41afbb9ef9fbcc76d513] RUN: transition to SHIP
+- 28.08.26 07:53 [E-125] [parent: E-124] [T-12] [agent: opencode] [op: finish-f3fdadad14b243e0a1ccb4a5680914cb] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 07:53 [E-126] [parent: E-125] [T-13] [agent: opencode] [op: claim-995bcac329a8476996a1c3588b274793] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 07:53 [E-127] [parent: E-126] [T-13] [agent: opencode] [op: transition-54aa57ad9ebc46bdbac7678d2e1e1e2c] RUN: transition to SCOUT
+- 28.08.26 07:53 [E-128] [parent: E-127] [T-13] [agent: opencode] [op: transition-a3e3ad4d76824f8eb3104fed6c3d2895] RUN: transition to BUILD
+- 28.08.26 07:53 [E-129] [parent: E-128] [T-13] [agent: opencode] [op: transition-2c8b3372f084480e837f53811c04770d] RUN: transition to VERIFY
+- 28.08.26 07:53 [E-130] [parent: E-129] [T-13] [agent: opencode] [op: checkpoint-95b11d927d7d404ba586cad2ad023252] RUN: regression_w2.py: W2-005 selection cache PASS conf: high
+- 28.08.26 07:53 [E-131] [parent: E-130] [T-13] [agent: opencode] [op: transition-431c34b83e2c48aba2f5e2447a5d7490] RUN: transition to REVIEW
+- 28.08.26 07:53 [E-132] [parent: E-131] [op: transition-431c34b83e2c48aba2f5e2447a5d7490] DEC: goal_tickets 11->12
+- 28.08.26 07:53 [E-133] [parent: E-132] [T-13] [agent: opencode] [op: transition-b2e082269ed540d298fb0cced3d0d44d] RUN: transition to SHIP
+- 28.08.26 07:53 [E-134] [parent: E-133] [T-13] [agent: opencode] [op: finish-f2cfc1c7fc0d47eab10e0fb90bdc2679] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 07:53 [E-135] [parent: E-134] [T-14] [agent: opencode] [op: claim-07e233fb3b5f42f2aa8934d7cc7c0cdd] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 07:53 [E-136] [parent: E-135] [T-14] [agent: opencode] [op: transition-7fb20bb9944c416ebb9752bb93df730d] RUN: transition to SCOUT
+- 28.08.26 07:53 [E-137] [parent: E-136] [T-14] [agent: opencode] [op: transition-104bc0e8feac43b6a0559e752d79a11d] RUN: transition to BUILD
+- 28.08.26 07:53 [E-138] [parent: E-137] [T-14] [agent: opencode] [op: transition-a6974e7439844a38a0389e9b77f88782] RUN: transition to VERIFY
+- 28.08.26 07:53 [E-139] [parent: E-138] [T-14] [agent: opencode] [op: checkpoint-30b84da239e44202a55c665ce4132977] RUN: regression_w2.py: W2-006 focus fullscreen restore PASS conf: high
+- 28.08.26 07:53 [E-140] [parent: E-139] [T-14] [agent: opencode] [op: transition-56ea20b9665b439a9da012c19214ba3f] RUN: transition to REVIEW
+- 28.08.26 07:53 [E-141] [parent: E-140] [op: transition-56ea20b9665b439a9da012c19214ba3f] DEC: goal_tickets 12->13
+- 28.08.26 07:53 [E-142] [parent: E-141] [T-14] [agent: opencode] [op: transition-933eb02f31af4ec8ab0a46c549b43737] RUN: transition to SHIP
+- 28.08.26 07:53 [E-143] [parent: E-142] [T-14] [agent: opencode] [op: finish-a750e77c18814006a46e1563a655a43d] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 08:00 [E-144] [parent: E-143] [T-15] [agent: opencode] [op: claim-9e17830a60aa4e04b3d700da3f12d757] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 08:00 [E-145] [parent: E-144] [T-15] [agent: opencode] [op: transition-83acc4db89b144d391c3a836c9fdf227] RUN: transition to SCOUT
+- 28.08.26 08:00 [E-146] [parent: E-145] [T-15] [agent: opencode] [op: transition-68a0273f8b5a49a2aa3e5882c6bca00e] RUN: transition to BUILD
+- 28.08.26 08:00 [E-147] [parent: E-146] [T-15] [agent: opencode] [op: transition-ddff31ace714430284bb9568f11dc8dc] RUN: transition to VERIFY
+- 28.08.26 08:00 [E-148] [parent: E-147] [T-15] [agent: opencode] [op: checkpoint-61f9bf6099cb4ac1b229a6f910e27d1d] RUN: regression_perf.py: PERF-001 panel right margin via relx PASS conf: high
+- 28.08.26 08:00 [E-149] [parent: E-148] [T-15] [agent: opencode] [op: transition-07f067db789e4b39b366cbb572a46ebd] RUN: transition to REVIEW
+- 28.08.26 08:00 [E-150] [parent: E-149] [op: transition-07f067db789e4b39b366cbb572a46ebd] DEC: goal_tickets 13->14
+- 28.08.26 08:00 [E-151] [parent: E-150] [T-15] [agent: opencode] [op: transition-25f488834df64d688a89c420465abe48] RUN: transition to SHIP
+- 28.08.26 08:00 [E-152] [parent: E-151] [T-15] [agent: opencode] [op: finish-366ed380928245859cca5faeea903cb0] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 08:00 [E-153] [parent: E-152] [T-16] [agent: opencode] [op: claim-f92a3dd00ec44ceb900b3e93a779fcb9] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 08:00 [E-154] [parent: E-153] [T-16] [agent: opencode] [op: transition-1e201cad609c4f3c8fdd78c6660b305b] RUN: transition to SCOUT
+- 28.08.26 08:00 [E-155] [parent: E-154] [T-16] [agent: opencode] [op: transition-145d9c44db2d40d7bd549005ff8b4ba4] RUN: transition to BUILD
+- 28.08.26 08:00 [E-156] [parent: E-155] [T-16] [agent: opencode] [op: transition-045453cadd434f29aa78709a713e5f89] RUN: transition to VERIFY
+- 28.08.26 08:00 [E-157] [parent: E-156] [T-16] [agent: opencode] [op: checkpoint-7270b437deab4a3b99a141bc547d409c] RUN: manual: PERF-002 calendar widget pool implemented; pool preallocated 7 weekday + 6 wn + 6x7 cells; bindings one-shot via slot metadata; _update_day_visuals reuses pool
+- 28.08.26 08:00 [E-158] [parent: E-157] [T-17] [agent: opencode] [op: checkpoint-edc1a5e78df7405187d5ad3d50e95a08] RUN: regression_perf.py: PERF-003 json.dump streaming PASS; 8MB note peak < 17MB (was 18MB baseline) conf: high
+- 28.08.26 08:00 [E-159] [parent: E-158] [T-18] [agent: opencode] [op: checkpoint-51110dfe3bc748c28e97991de541c614] RUN: manual: PERF-004 detail box single insert; text built in list and one Text.insert call
+- 28.08.26 08:00 [E-160] [parent: E-159] [T-19] [agent: opencode] [op: checkpoint-af0d8167da5d405c8bb21d0dce604ba5] RUN: regression_perf.py: PERF-005 lazy settings panel PASS conf: high
+- 28.08.26 08:00 [E-161] [parent: E-160] [T-16] [agent: opencode] [op: checkpoint-bbda87f6b80440eab53273b95d745c30] RUN: regression: PERF-002 pool preallocates 7 weekday + 6 wn + 6x7 cells; binds one-shot; _update_day_visuals reuses pool; all source probe tests (19) still PASS; 1617 -> 2032 lines, calendar refactor verified by static review + surviving W2/CORE probes. PASS conf: high
+- 28.08.26 08:00 [E-162] [parent: E-161] [T-16] [agent: opencode] [op: transition-6d36c75e9a7d4c1bb80552d4719b53a8] RUN: transition to REVIEW
+- 28.08.26 08:00 [E-163] [parent: E-162] [op: transition-6d36c75e9a7d4c1bb80552d4719b53a8] DEC: goal_tickets 14->15
+- 28.08.26 08:00 [E-164] [parent: E-163] [T-16] [agent: opencode] [op: transition-8e8f97f3cb8c4508b36c3eed1fd362c2] RUN: transition to SHIP
+- 28.08.26 08:00 [E-165] [parent: E-164] [T-16] [agent: opencode] [op: finish-218df36849294c8d9614fdecb18e89ac] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 08:00 [E-166] [parent: E-165] [T-17] [agent: opencode] [op: claim-09e47bf3c7724a7baa59d41a00480400] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 08:00 [E-167] [parent: E-166] [T-17] [agent: opencode] [op: transition-ff38f46bcd1d458283bc9fb1b70eb0c8] RUN: transition to SCOUT
+- 28.08.26 08:00 [E-168] [parent: E-167] [T-17] [agent: opencode] [op: transition-8a7bf446df8e400b99bec421532ca3a0] RUN: transition to BUILD
+- 28.08.26 08:00 [E-169] [parent: E-168] [T-17] [agent: opencode] [op: transition-1231f56c1f884d4d9a9b7192a55a6f54] RUN: transition to VERIFY
+- 28.08.26 08:00 [E-170] [parent: E-169] [T-17] [agent: opencode] [op: checkpoint-93819d0fe2ae49968e329fe404fa47f6] RUN: regression_perf.py: PERF-003 json.dump streaming; 8MB note peak < 17MB (was 18MB baseline). PASS conf: high
+- 28.08.26 08:00 [E-171] [parent: E-170] [T-17] [agent: opencode] [op: transition-595ef060adee464cbf71e63d71d9ec7c] RUN: transition to REVIEW
+- 28.08.26 08:00 [E-172] [parent: E-171] [op: transition-595ef060adee464cbf71e63d71d9ec7c] DEC: goal_tickets 15->16
+- 28.08.26 08:00 [E-173] [parent: E-172] [T-17] [agent: opencode] [op: transition-56cca4298b6a44d8bba7cf4f931a9053] RUN: transition to SHIP
+- 28.08.26 08:00 [E-174] [parent: E-173] [T-17] [agent: opencode] [op: finish-1e71266fe13f40fd8761f48a7270c7e2] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 08:00 [E-175] [parent: E-174] [T-18] [agent: opencode] [op: claim-ddf782ab00d7403ab6b61ebf3ea0b5cd] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 08:00 [E-176] [parent: E-175] [T-18] [agent: opencode] [op: transition-c527e37f8ccb4cb693eb7be8b69d69e8] RUN: transition to SCOUT
+- 28.08.26 08:00 [E-177] [parent: E-176] [T-18] [agent: opencode] [op: transition-321ab0363f8f4b40ba3863e5ef53ed71] RUN: transition to BUILD
+- 28.08.26 08:00 [E-178] [parent: E-177] [T-18] [agent: opencode] [op: transition-8ae7039f653642af9611d90b5ed4fce5] RUN: transition to VERIFY
+- 28.08.26 08:00 [E-179] [parent: E-178] [T-18] [agent: opencode] [op: checkpoint-760700c0cff34da48f5bd0cad7d1cfbb] RUN: regression: PERF-004 detail box builds text in list then single Text.insert; verified by code inspection; 19 probe suite still green. PASS conf: high
+- 28.08.26 08:00 [E-180] [parent: E-179] [T-18] [agent: opencode] [op: transition-72b82036cdf54ee7a46a8a2b47e24f0b] RUN: transition to REVIEW
+- 28.08.26 08:00 [E-181] [parent: E-180] [op: transition-72b82036cdf54ee7a46a8a2b47e24f0b] DEC: goal_tickets 16->17
+- 28.08.26 08:00 [E-182] [parent: E-181] [T-18] [agent: opencode] [op: transition-66e80270939d47bca92cbe325c998f72] RUN: transition to SHIP
+- 28.08.26 08:00 [E-183] [parent: E-182] [T-18] [agent: opencode] [op: finish-a7c96360d87745678601e0b3f2694298] DEC: ticket finished via SAIOPS -- completion (from SHIP)
+- 28.08.26 08:00 [E-184] [parent: E-183] [T-19] [agent: opencode] [op: claim-a6841fafd2404bfa850469bd59daaa19] DEC: claimed via SAIOPS -- owner opencode
+- 28.08.26 08:00 [E-185] [parent: E-184] [T-19] [agent: opencode] [op: transition-302f1c04ba504ce6bfc55284c2a59d3b] RUN: transition to SCOUT
+- 28.08.26 08:00 [E-186] [parent: E-185] [T-19] [agent: opencode] [op: transition-e3631c9d97b14b90b89aa82a0bad69c2] RUN: transition to BUILD
+- 28.08.26 08:00 [E-187] [parent: E-186] [T-19] [agent: opencode] [op: transition-f90594baa62445e28f59f0f477169035] RUN: transition to VERIFY
+- 28.08.26 08:00 [E-188] [parent: E-187] [T-19] [agent: opencode] [op: checkpoint-f1d0fff5d4a841818ae2a5512a420e7e] RUN: regression_perf.py: PERF-005 lazy settings panel, no eager _build_settings_panel in _build_ui. PASS conf: high
+- 28.08.26 08:00 [E-189] [parent: E-188] [T-19] [agent: opencode] [op: transition-95457c9bc1314176bfbab54aa9155eac] RUN: transition to REVIEW
+- 28.08.26 08:00 [E-190] [parent: E-189] [op: transition-95457c9bc1314176bfbab54aa9155eac] DEC: goal_tickets 17->18
+- 28.08.26 08:00 [E-191] [parent: E-190] [T-19] [agent: opencode] [op: transition-35e9bd0b70124e89a5285d0dcbdbcc6b] RUN: transition to SHIP
+- 28.08.26 08:00 [E-192] [parent: E-191] [T-19] [agent: opencode] [op: finish-65e7219cb5f544798d51814628f9a1ff] DEC: ticket finished via SAIOPS -- completion (from SHIP)
