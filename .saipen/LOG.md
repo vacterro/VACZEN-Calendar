@@ -194,3 +194,42 @@
 - 28.08.26 08:00 [E-192] [parent: E-191] [T-19] [agent: opencode] [op: finish-65e7219cb5f544798d51814628f9a1ff] DEC: ticket finished via SAIOPS -- completion (from SHIP)
 - 28.08.26 08:04 [E-193] [parent: E-192] [agent: opencode] [op: checkpoint-04859d62bdc44cfca6a1b9ae1bb04b08] DEC: ship: ce71460 pushed to origin/master -- 18 audit tickets (T-2..T-19) implemented, verified, shipped
 - 28.08.26 08:04 [E-194] [parent: E-193] [agent: opencode] [op: checkpoint-37d3faf4863c4b2d83af1849dd7db9da] DEC: goal exit: objective mature -- all 18 SRC-001 audit tickets DONE + shipped ce71460; execution_intent normal, counters cleared
+- 28.08.26 09:08 [E-195] [parent: E-194] [agent: opencode] [op: transition-a1b0e0f8e8404013b01eb01c963e50fd] RUN: transition to HUNT
+- 28.08.26 09:08 [E-196] [parent: E-195] [agent: opencode] [op: checkpoint-958ad16956d442be81e0dd0745f867a0] RUN: hunt -> clean @0f60fb5
+- 28.08.26 09:09 [E-197] [parent: E-196] [agent: opencode] [op: transition-a6ce0e8ab4cd47259acb44334d095300] RUN: transition to CLEAN
+- 28.08.26 09:09 [E-198] [parent: E-197] [agent: opencode] [op: checkpoint-7f51a9a6433f4d1ab883d3f2bccfce20] RUN: clean -> done @0f60fb5
+- 28.08.26 09:09 [E-199] [parent: E-198] [agent: opencode] [op: checkpoint-15caff3753a044289a203de9034f2376] RUN: validate.py -> PASS conf: high; 22 regression probes OK; py_compile PASS post-clean
+- 28.08.26 09:10 [E-200] [parent: E-199] [agent: opencode] [op: transition-8531626c3ae645218ed79236f6c67751] RUN: transition to HUNT
+- 28.08.26 09:10 [E-201] [parent: E-200] [agent: opencode] [op: checkpoint-4b6d17b9189e43a597da277b07e9ac67] RUN: hunt -> clean @0f60fb5
+- 28.08.26 09:11 [E-202] [parent: E-201] [agent: opencode] [op: transition-fa52b9c4244e4003bd669593cb7b965b] RUN: transition to CLEAN
+- 28.08.26 09:11 [E-203] [parent: E-202] [agent: opencode] [op: checkpoint-62ac716ff12b480f845894ee15831d47] RUN: final forced HUNT (stage I) clean @0f60fb5; post-CLEAN test gate passed
+- 28.08.26 09:11 [E-204] [parent: E-203] [agent: opencode] [op: transition-5aab02abc0264f32a3c3c134290f4074] RUN: transition to DONE
+- 28.08.26 09:13 [E-205] [parent: E-204] [agent: opencode] [op: checkpoint-bb2516b360254bb6b25de4a4402551e4] DEC: convergence M: K (fresh EE) N/A -- saitranslate not shipped in this project (MANIFEST has only saiwiki); L (fresh QQ) PENDING -- saiwiki OUTBOX WIKI-001 status=ready but source_head 18114ac != current 0f60fb5, source_tree_fingerprint stale; producer package invalid by freshness gate; closure bar (both packages match current source identity) UNMET for QQ. User must run 'qqq' to regenerate + collect. Plain cc may not satisfy M gate per CONVERGE.md; M-stage partial close
+- 28.08.26 09:13 [E-206] [parent: E-205] [agent: opencode] [op: transition-aed32219fc034c1f900decb18a76917d] RUN: transition to DONE
+- 28.08.26 09:18 [E-207] [parent: E-206] [agent: opencode] [op: converge_intent-cd15e67653144e08aa8575c8901d87f2] DEC: execution intent -> converge/crew
+- 28.08.26 10:01 [E-208] [parent: E-207] [agent: saihunt] [op: crew-run-279a8f39d89c4036a686d05c344f3443] DEC: crew run -- epoch converge_intent-cd15e67653144e08aa8575c8901d87f2 role saihunt (1 package(s))
+- 28.08.26 10:03 [E-209] [parent: E-208] [agent: saitest] [op: crew-run-81ae458fcb5c4595b0309522c7f124fe] DEC: crew run -- epoch converge_intent-cd15e67653144e08aa8575c8901d87f2 role saitest (1 package(s))
+- 28.08.26 10:05 [E-210] [parent: E-209] [agent: saipython] [op: crew-run-dda6e68f3c864fe4b3bab5686faf4863] DEC: crew run -- epoch converge_intent-cd15e67653144e08aa8575c8901d87f2 role saipython (1 package(s))
+- 28.08.26 10:13 [E-211] [parent: E-210] [agent: saipython] [op: crew-run-20d9c7c42a684903a6c56315aab180a6] DEC: crew run -- epoch converge_intent-cd15e67653144e08aa8575c8901d87f2 role saipython (1 package(s))
+- 28.08.26 10:15 [E-212] [parent: E-211] [agent: saiui] [op: crew-run-6a2457000c2440948128cb6acad6a3a6] DEC: crew run -- epoch converge_intent-cd15e67653144e08aa8575c8901d87f2 role saiui (1 package(s))
+- 28.08.26 10:25 [E-213] [parent: E-212] [agent: opencode] [op: checkpoint-73433ae02b2d494097197648102aaa8e] DEC: user brake: stop requested via ss; crew paused at SC-5 saiui certification
+- 30.08.26 12:37 [E-214] [parent: E-213] [agent: saihunt] [op: crew-run-71ee2378be584ba9aeacb588692cea71] DEC: crew run -- epoch converge_intent-cd15e67653144e08aa8575c8901d87f2 role saihunt (0 package(s))
+- 30.08.26 12:39 [E-215] [parent: E-214] [agent: saihunt] [op: crew-run-7f1196ab4c7e4fb289bcedd84a568773] DEC: crew run -- epoch converge_intent-cd15e67653144e08aa8575c8901d87f2 role saihunt (1 package(s))
+- 30.08.26 12:41 [E-216] [parent: E-215] [agent: saitest] [op: crew-run-a1e3849fdaa1487aa0d0654dc4ca3336] DEC: crew run -- epoch converge_intent-cd15e67653144e08aa8575c8901d87f2 role saitest (1 package(s))
+- 01.09.26 09:11 [E-217] [parent: E-216] [agent: opencode] [op: scope-pivot-ff->vv] DEC: user pivot ff->vv 'github repo make it beauty' = full repo spruce (3 READMEs + gh repo metadata + screenshot slot). 4 tickets drafted: T-20 README.md EN, T-21 README.et.md, T-22 README.ru.md, T-23 gh repo metadata (description+topics+homepage+screenshot slot). Phase DONE -> PLAN
+- 01.09.26 09:12 [E-218] [parent: E-217] [agent: opencode] [op: plan-batch-T20..T23] RUN: plan -- 4 tickets, full repo spruce
+- 01.09.26 09:13 [E-219] [parent: E-218] [agent: opencode] [op: board-edit-T20..T23] RUN: BOARD.md updated -- T-20 [P1] DOING, T-21..T-23 [P1/P2] TODO
+- 01.09.26 09:13 [E-220] [parent: E-219] [agent: opencode] [op: transition-PLAN->BUILD] RUN: transition to BUILD
+- 01.09.26 09:18 [E-221] [parent: E-220] [agent: opencode] [op: build-T20] RUN: T-20 README.md EN beauty -> DONE. 181 lines, badges, hero ASCII, feature grid, keymap, layout, docs table, support CTA, MIT footer. Screenshot slot in comment for later
+- 01.09.26 09:18 [E-222] [parent: E-221] [agent: opencode] [op: transition-T20-VERIFY] RUN: T-20 [P1] -> VERIFY
+- 01.09.26 09:21 [E-223] [parent: E-222] [agent: opencode] [op: build-T21] RUN: T-21 README.et.md beauty -> DONE. 181 lines, all real gh-relative links resolve, estonian tech terms (kalender/ülesanne/fookus/sätted/otsetee) used
+- 01.09.26 09:24 [E-224] [parent: E-223] [agent: opencode] [op: build-T22] RUN: T-22 README.ru.md beauty -> DONE. 181 lines, all real gh-relative links resolve, native ru phrasing
+- 01.09.26 09:27 [E-225] [parent: E-224] [agent: opencode] [op: build-T23] RUN: T-23 gh repo metadata -> DONE. description set, 8 topics added, homepage set, slug intact, all 3 fields verified
+- 01.09.26 09:28 [E-226] [parent: E-225] [agent: opencode] [op: transition-BUILD->VERIFY] RUN: transition to VERIFY (batch T-20..T-23)
+- 01.09.26 09:29 [E-227] [parent: E-226] [agent: opencode] [op: verify-batch] RUN: 3 READMEs 181 lines each, all real gh-relative links resolve, py_compile OK, gh metadata live. -> PASS
+- 01.09.26 09:30 [E-228] [parent: E-227] [agent: opencode] [op: transition-VERIFY->REVIEW] RUN: transition to REVIEW
+- 01.09.26 09:31 [E-229] [parent: E-228] [agent: opencode] [op: review-batch] RUN: T-20..T-23 self-review -- badges use shields.io dynamic, no external image deps, README/structure parallels (screenshot/feature grid/keymap/layout/docs table/cta/license), 3 langs same section set, no command-typo, no broken refs, no em-dash-only decoration, gh metadata description+topics+homepage live. -> PASS, no review comments
+- 01.09.26 09:31 [E-230] [parent: E-229] [agent: opencode] [op: transition-REVIEW->SHIP] RUN: transition to SHIP
+- 01.09.26 09:33 [E-231] [parent: E-230] [agent: opencode] [op: ship-commit-1bf4d26] RUN: commit 1bf4d26 + push origin master -> PASS (0f60fb5..1bf4d26). gh metadata is live (no push needed for repo settings)
+- 01.09.26 09:33 [E-232] [parent: E-231] [agent: opencode] [op: transition-SHIP->DONE] RUN: transition to DONE @1bf4d26
+- 01.09.26 09:35 [E-233] [parent: E-232] [agent: opencode] [op: checkpoint-final] RUN: checkpoint -> DONE @1bf4d26. BOARD.md moved T-20..T-23 to DONE. STATE.md updated: phase DONE, transition_from SHIP, last_event 232, execution_intent normal, updated 2026-09-01T09:35Z. validator re-run after duplicate-##DONE + claim_time-ISO + verify-missing fixes: PASS
