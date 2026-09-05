@@ -18,6 +18,7 @@ import re
 import sys
 import os
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -149,6 +150,12 @@ def sanitize_text(s):
     """
     if not isinstance(s, str):
         return s
+    # PERF-004 (wave 3): an ASCII string cannot contain a UTF-16 surrogate code
+    # point, and CPython already knows the answer from the string's internal
+    # representation. Establishing that in O(1) avoids a full O(length) regex
+    # scan of multi-megabyte ASCII notes on every load/render.
+    if s.isascii():
+        return s
     # PERF-002: the UTF-16 sanitize pass only matters when a lone surrogate is
     # actually present. Skip the encode/decode (and its ~3x transient
     # allocation) for the common case of valid Unicode so large notes do not
@@ -178,13 +185,39 @@ class _LockAcquisitionFailure(Exception):
     """Raised by _save_lock when the interprocess lock cannot be obtained
     (directory-creation failure, open permission error, or lock contention).
     Fail-closed: the writer must NOT enter the critical section.
+
+    ``permanent`` separates a condition that retrying cannot fix (open,
+    permission, missing directory) from ordinary lock contention, so PERF-002's
+    bounded retry never burns its deadline on a failure that will not clear.
     """
+
+    def __init__(self, message, permanent=False):
+        super().__init__(message)
+        self.permanent = permanent
 
 
 # Returned by save() when a stale-writer rejection occurred and the runtime was
-# reloaded from disk. Truthy (so `if not save():` does not treat it as failure)
-# but distinct from True so callers can react to it.
+# reloaded from disk. Distinct from True, and never treated as success: every
+# caller branches on `is True` / `is STALE_WRITER` / otherwise (CORE-001).
 STALE_WRITER = object()
+
+# PERF-002: bounded contention budget for the interprocess save lock. Small
+# enough to keep the GUI responsive, long enough to absorb another instance's
+# ordinary save window instead of turning it into a user-visible failure.
+LOCK_TIMEOUT_S = 0.25
+LOCK_RETRY_START_S = 0.002
+LOCK_RETRY_MAX_S = 0.020
+
+# PERF-003: bounded detail-render batch. Fragments accumulate in a Python list
+# until this many characters are pending, then one Text.insert flushes them, so
+# Tcl crossings scale with rendered bytes instead of tasks x fields while peak
+# transient memory stays capped.
+DETAIL_BATCH_CHARS = 1 << 18  # 256 KiB
+
+# PERF-005: exact naming contract for atomic-write candidates. Reclamation
+# matches this prefix AND suffix in DATA_PATH's own directory, nothing else.
+TMP_PREFIX = ".cal_tmp_"
+TMP_SUFFIX = ".json"
 
 
 def _platform_lock_path(data_path):
@@ -192,16 +225,20 @@ def _platform_lock_path(data_path):
 
 
 @contextmanager
-def _save_lock(data_path):
+def _save_lock(data_path, timeout=None):
     """CORE-002 / PERF-001: interprocess file lock spanning the whole
     read-check-write-replace sequence.
 
-    * Non-blocking: we never park the calling thread waiting for a lock held
-      by another process; a held lock is reported immediately.
-    * Fail-closed: if the OS lock cannot be acquired we raise
-      ``_LockAcquisitionFailure`` instead of silently proceeding without mutual
-      exclusion (the old best-effort path could corrupt the data file under
-      contention).
+    * The OS primitive stays non-blocking; we never park the thread inside a
+      blocking kernel wait.
+    * PERF-002: ordinary contention is retried with a short backoff until a
+      bounded deadline (``timeout`` seconds, default ``LOCK_TIMEOUT_S``) instead
+      of failing on the first busy result. Another instance's ordinary save
+      window is milliseconds-to-hundreds-of-milliseconds long, and rejecting a
+      user's Save because of that overlap turned serialization into data loss.
+    * Fail-closed: when the deadline passes, or the failure is permanent, we
+      raise ``_LockAcquisitionFailure`` instead of proceeding without mutual
+      exclusion. There is no unlocked fallback path.
     * Re-entrant within one process via the ``_held`` flag so a nested save
       (e.g. a settings commit triggered from inside a task save) serializes
       instead of dead-locking.
@@ -210,31 +247,55 @@ def _save_lock(data_path):
         # Same process: re-entrant serialization, no second OS lock.
         yield
         return
+    if timeout is None:
+        timeout = LOCK_TIMEOUT_S
     lock_path = _platform_lock_path(data_path)
     fd = None
     acquired = False
     try:
-        data_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
-        if os.name == "nt":
-            try:
-                import msvcrt  # type: ignore
-                # LK_NBLCK returns immediately; OSError means another process
-                # holds the lock -> fail-closed below.
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-                acquired = True
-            except (OSError, ImportError):
-                acquired = False
-        else:
-            try:
-                import fcntl  # type: ignore
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-            except (OSError, ImportError):
-                acquired = False
+        try:
+            data_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as exc:
+            # Permanent: no amount of waiting creates a directory we may not
+            # create or opens a file we may not open.
+            raise _LockAcquisitionFailure(
+                "could not open save lock %s: %s" % (lock_path, exc), permanent=True
+            ) from exc
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        delay = LOCK_RETRY_START_S
+        while True:
+            if os.name == "nt":
+                try:
+                    import msvcrt  # type: ignore
+                    # LK_NBLCK returns immediately; OSError means another
+                    # process holds the lock -> retry below, then fail-closed.
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    acquired = True
+                except ImportError as exc:
+                    raise _LockAcquisitionFailure(
+                        "no locking primitive available", permanent=True
+                    ) from exc
+                except OSError:
+                    acquired = False
+            else:
+                try:
+                    import fcntl  # type: ignore
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                except ImportError as exc:
+                    raise _LockAcquisitionFailure(
+                        "no locking primitive available", permanent=True
+                    ) from exc
+                except OSError:
+                    acquired = False
+            if acquired or time.monotonic() >= deadline:
+                break
+            time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            delay = min(delay * 2, LOCK_RETRY_MAX_S)
         if not acquired:
             raise _LockAcquisitionFailure(
-                "could not acquire save lock on %s" % lock_path
+                "could not acquire save lock on %s within %.3fs" % (lock_path, timeout)
             )
         _save_lock._held = True
         try:
@@ -311,17 +372,22 @@ def _is_non_finite(v):
 
 
 def _parse_generation(raw):
-    """Shared generation parser for load and save-side reads (CORE-007).
+    """Shared strict generation parser for load and save-side reads.
 
-    Missing generation defaults to 0. Only non-negative integers are valid;
-    negative, non-finite, or non-integer values are rejected so both readers
-    agree exactly and an invalid generation routes through the damaged-file
-    recovery path instead of being silently normalized differently per side.
+    CORE-003 (wave 3): the generation is the ownership token stale-writer
+    detection compares, so it is validated BEFORE any conversion, never
+    coerced by ``int()``. Valid means: an actual ``int`` (``bool`` excluded --
+    ``True`` is not generation 1), value >= 0. A float such as ``1.5``, a
+    numeric string such as ``"7"``, NaN/Infinity, and every other type are
+    invalid and raise, which routes the file through the existing
+    corruption/quarantine recovery path instead of inventing an ownership
+    token that no writer ever committed.
     """
-    gen = int(raw)
-    if _is_non_finite(gen) or gen < 0:
-        raise ValueError("invalid generation")
-    return gen
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError("invalid generation: %r is not an integer" % (raw,))
+    if raw < 0:
+        raise ValueError("invalid generation: %r is negative" % (raw,))
+    return raw
 
 
 def _is_hex_color(s):
@@ -336,6 +402,46 @@ def _is_hex_color(s):
         return True
     except ValueError:
         return False
+
+
+def _decode_state(st):
+    """W2-002: decode a persisted `state` section into `(current, selected_day)`.
+
+    A pure function of the section alone, so startup and reload derive the same
+    view from the same bytes. A missing or unusable field falls back to today's
+    date policy rather than to whatever the live instance happened to hold.
+    """
+    today = date.today()
+    if not isinstance(st, dict):
+        st = {}
+    try:
+        y = int(st.get("year", today.year))
+        if _is_non_finite(st.get("year")):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        y = today.year
+    try:
+        m = int(st.get("month", today.month))
+        if _is_non_finite(st.get("month")):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        m = today.month
+    try:
+        d = int(st.get("selected_day", today.day))
+        if _is_non_finite(st.get("selected_day")):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        d = today.day
+    if not (1 <= m <= 12):
+        m = today.month
+    if not (date.min.year <= y <= date.max.year):
+        y = today.year
+    try:
+        max_day = calendar.monthrange(y, m)[1]
+    except ValueError:
+        y, m = today.year, today.month
+        max_day = calendar.monthrange(y, m)[1]
+    return date(y, m, 1), min(max(1, d), max_day)
 
 
 def normalize_settings(raw):
@@ -388,6 +494,24 @@ def normalize_settings(raw):
 
 class CompactCalendarApp:
     _FONT_FAMILIES_CACHE = None
+    # Class-level defaults for the authorization/identity state introduced by
+    # the CORE/W2/PERF repairs. Instances set these in __init__; declaring them
+    # here means a partially constructed instance (headless probes, a crash
+    # part-way through startup) still answers "not blocked, nothing known"
+    # instead of raising AttributeError inside the save path.
+    _preservation_required = False
+    _write_blocked = False
+    _write_block_reason = None
+    _disk_identity = None
+    _ui_ready = False
+    _pending_reconcile = False
+    # Same reason for the pre-existing recovery flags: the save path reads them
+    # to decide whether the file may be replaced, and that decision must never
+    # depend on how far a constructor happened to get.
+    _load_failed = False
+    _partial_recovery = False
+    _recovery_message = None
+    _quarantine_path = None
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -420,28 +544,38 @@ class CompactCalendarApp:
         self._partial_recovery = False
         self._recovery_message = None
         self._dirty = False
+        # W2-001: authoritative write authorization. `_load_failed` is a
+        # warning flag; these two decide whether DATA_PATH may be replaced at
+        # all. `_preservation_required` means the load dropped or could not
+        # represent persisted bytes, so an immutable snapshot MUST exist before
+        # any rewrite; `_write_blocked` latches fail-closed when that snapshot
+        # could not be created.
+        self._preservation_required = False
+        self._write_blocked = False
+        self._write_block_reason = None
+        # PERF-001: identity of the DATA_PATH snapshot this instance last
+        # loaded or wrote, used to skip the O(file-size) reparse when no other
+        # writer has touched the file.
+        self._disk_identity = None
+        # CORE-002: reconciliation needs the widget tree; and a reload that
+        # arrives mid-edit defers the parts that would fight the editor.
+        self._ui_ready = False
+        self._pending_reconcile = False
 
         self._load()
         self._apply_window_mode()
         self._build_style()
         self._build_ui()
         self._bind_keys()
-        self._refresh_all()
-        self._tick_clock()
-        
-        if self.settings.get("focus_mode", False):
-            self._apply_focus_visual(True)
-            
+        self._ui_ready = True
+        # CORE-002: one idempotent reconciliation path owns startup AND reload,
+        # so no derived runtime state exists on only one of the two.
+        self.reconcile_runtime_from_settings()
+
         self.root.update_idletasks()
         self.root.deiconify()
-        if self._load_failed:
-            self.root.after(200, lambda: messagebox.showwarning(
-                "Data file was corrupt",
-                "The data file could not be read and was quarantined as\n"
-                f"{self._quarantine_path or DATA_PATH.name + '.corrupt.bak'}.\n"
-                "A fresh dataset has been started.",
-                parent=self.root,
-            ))
+        if self._load_failed or self._write_blocked:
+            self.root.after(200, self._warn_recovery_state)
 
     def _base_bg(self):
         return self.settings["color_app_bg"]
@@ -459,6 +593,79 @@ class CompactCalendarApp:
         self.root.attributes("-fullscreen", self.settings.get("fullscreen_start", True))
         self.root.attributes("-topmost", self.settings.get("always_on_top", True))
         self._pre_focus_fs = self.settings.get("fullscreen_start", True)
+
+    def _warn_recovery_state(self):
+        """W2-001: report what actually happened -- never a fabricated path.
+
+        The old message always named ``<data>.corrupt.bak`` even when no
+        snapshot had been created, which told the user their data was preserved
+        at a path that did not exist.
+        """
+        if self._write_blocked:
+            body = (
+                "The data file could not be read or fully recovered, and the\n"
+                "backup copy could NOT be created "
+                f"({self._write_block_reason or 'unknown reason'}).\n"
+                "Saving is disabled so the original file is not overwritten.\n"
+                "Free up the backup names or fix permissions, then save again."
+            )
+        elif self._quarantine_path is not None:
+            body = (
+                "The data file could not be fully read. The original was\n"
+                f"preserved as\n{self._quarantine_path}\n"
+                + (self._recovery_message or "Recoverable data was kept.")
+            )
+        else:
+            body = self._recovery_message or "The data file could not be fully read."
+        try:
+            messagebox.showwarning("Data file recovery", body, parent=self.root)
+        except tk.TclError:
+            pass
+
+    def reconcile_runtime_from_settings(self, *, render=True):
+        """CORE-002 / W2-004: idempotent runtime reconciliation from the model.
+
+        ONE path derives every piece of runtime state from ``self.settings``:
+        window attributes, ttk style/fonts, focus-mode packing and fullscreen
+        ownership, the single clock callback, and the rendered content. Startup,
+        stale-writer reload, normal settings rollback and exception rollback all
+        call this instead of each replaying a private subset -- which is how the
+        model could claim focus mode was on while every panel was still packed.
+
+        Idempotent by construction: fullscreen intent comes from the settings,
+        never from a re-sampled live attribute, so calling it twice cannot
+        capture "fullscreen" as the pre-focus state.
+        """
+        if not self._ui_ready:
+            self._apply_window_mode()
+            return
+        focus = bool(self.settings.get("focus_mode", False))
+        try:
+            self.root.attributes("-topmost", self.settings.get("always_on_top", True))
+        except tk.TclError:
+            pass
+        self._pre_focus_fs = bool(self.settings.get("fullscreen_start", True))
+        self._build_style()
+        # capture=False: the restore target is the persisted setting, so a
+        # repeated reconcile cannot overwrite it with the current live value.
+        self._apply_focus_visual(focus, capture=False)
+        self._start_clock()
+        if render:
+            self._refresh_all()
+            if self.is_editing:
+                # The side panel belongs to the editor right now; finish the
+                # deferred part when edit mode ends (CORE-002).
+                self._pending_reconcile = True
+        else:
+            self._pending_reconcile = True
+
+    def _flush_pending_reconcile(self):
+        """Run the reconciliation deferred by an edit session, once."""
+        if not self._pending_reconcile:
+            return
+        self._pending_reconcile = False
+        if self._ui_ready and not self.is_editing:
+            self._refresh_all()
 
     def _font(self, size, bold=False, mono=False):
         fam = self.settings["font_mono"] if mono else self.settings["font_family"]
@@ -671,6 +878,12 @@ class CompactCalendarApp:
         self.edit_btns.grid(row=5, column=0, columnspan=2, pady=(15, 0), padx=10, sticky="e")
         ttk.Button(self.edit_btns, text="Save (Enter)", style="Compact.TButton", command=self.commit_task).pack(side="left", padx=(0, 5))
         ttk.Button(self.edit_btns, text="Cancel (Esc)", style="Compact.TButton", command=self.cancel_task).pack(side="left")
+
+        # W2-003: in-panel validation line. A blank title is a validation
+        # failure that keeps the draft, so it needs somewhere to say so that is
+        # not a modal dialog and not the panel heading.
+        self.edit_msg = ttk.Label(self.edit_frame, text="", style="PanelMuted.TLabel")
+        self.edit_msg.grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 0))
 
         self.edit_frame.columnconfigure(1, weight=1)
 
@@ -1288,26 +1501,44 @@ class CompactCalendarApp:
             self.detail_lbl.insert("end", "No tasks.\n\nA add\nE edit\nD delete\nSpace done")
             self.detail_lbl.configure(state="disabled")
             return
-        # PERF-003: avoid building one unbounded Python document. Insert each
-        # detail block directly; for very large notes stream the note text in
-        # chunks so peak temporary memory is bounded regardless of note size
-        # and the rendered text stays character-for-character identical.
-        _CHUNK = 1 << 16  # 64 KiB
+        # PERF-003 (wave 3): bounded batching, not one of the two extremes.
+        # Per-fragment inserts cost 7 Tcl crossings per task (measured 62 ms at
+        # 5,000 tasks); one monolithic string is unbounded memory for a 32 MiB
+        # note. Accumulate fragments until DETAIL_BATCH_CHARS is pending, then
+        # issue exactly one insert. Output is character-for-character identical.
+        buf = []
+        pending = 0
+        insert = self.detail_lbl.insert
+
+        def flush():
+            nonlocal pending
+            if buf:
+                insert("end", "".join(buf))
+                del buf[:]
+                pending = 0
+
+        def emit(fragment):
+            nonlocal pending
+            buf.append(fragment)
+            pending += len(fragment)
+            if pending >= DETAIL_BATCH_CHARS:
+                flush()
+
         for idx, task in enumerate(items, 1):
-            self.detail_lbl.insert("end", f"{idx}. {task.title}\n")
-            self.detail_lbl.insert(
-                "end",
-                f"   kind: {task.kind} | priority: {task.priority} | done: {task.done}\n",
-            )
+            emit(f"{idx}. {task.title}\n")
+            emit(f"   kind: {task.kind} | priority: {task.priority} | done: {task.done}\n")
             if task.time:
-                self.detail_lbl.insert("end", f"   time: {task.time}\n")
+                emit(f"   time: {task.time}\n")
             if task.note:
-                self.detail_lbl.insert("end", "   note: ")
+                emit("   note: ")
                 note = task.note
-                for start in range(0, len(note), _CHUNK):
-                    self.detail_lbl.insert("end", note[start:start + _CHUNK])
-                self.detail_lbl.insert("end", "\n")
-            self.detail_lbl.insert("end", "\n")
+                # A single huge note is streamed through the SAME bounded
+                # buffer, so peak transient Python memory stays capped.
+                for start in range(0, len(note), DETAIL_BATCH_CHARS):
+                    emit(note[start:start + DETAIL_BATCH_CHARS])
+                emit("\n")
+            emit("\n")
+        flush()
         self.detail_lbl.configure(state="disabled")
 
     def select_day(self, day_num):
@@ -1326,6 +1557,12 @@ class CompactCalendarApp:
             return
         old_day = self.selected_day
         self.selected_day = day_num
+        # CORE-005: selected_day is part of the persisted state payload, so a
+        # real change IS a durable mutation and must advance the generation on
+        # the next save. Without this, two instances could overwrite the field
+        # at the same generation with no stale-writer detection. Selecting the
+        # already-selected day returned above, so this is never a false dirty.
+        self._dirty = True
         # W2-005: the cache belongs to the previous day; clear it before
         # the new day's listbox is rendered so stale indexes cannot
         # migrate.
@@ -1344,6 +1581,7 @@ class CompactCalendarApp:
     def _show_edit_mode(self, idx=None):
         self.is_editing = True
         self.editing_idx = idx
+        self._set_edit_message("")
         self.view_frame.pack_forget()
         self.edit_frame.pack(fill="both", expand=True)
         
@@ -1380,12 +1618,71 @@ class CompactCalendarApp:
             return
         self._show_edit_mode(idx)
 
+    def _set_edit_message(self, text):
+        """W2-003: concise, non-modal validation feedback inside the editor."""
+        try:
+            self.edit_msg.config(text=text)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _editor_draft(self):
+        """Snapshot every editor field so a conflict can restore the draft."""
+        return {
+            "editing_idx": self.editing_idx,
+            "title": self.edit_title.get(),
+            "time": self.edit_time.get(),
+            "note": self.edit_note.get("1.0", "end-1c"),
+            "kind": self.edit_kind.get(),
+            "priority": self.edit_priority.get(),
+        }
+
+    def _restore_editor_draft(self, draft, message=""):
+        """CORE-001: re-enter the editor with the user's exact typed draft.
+
+        A stale-writer rejection reloads another instance's snapshot; the local
+        edit was never persisted and must not be thrown away silently.
+        """
+        idx = draft.get("editing_idx")
+        if idx is not None:
+            items = self.tasks.get(self._task_key(), [])
+            if not (isinstance(idx, int) and 0 <= idx < len(items)):
+                # The row this edit targeted no longer exists in the winning
+                # snapshot: keep the text, but commit it as a new task.
+                idx = None
+        self.is_editing = True
+        self.editing_idx = idx
+        self.view_frame.pack_forget()
+        self.edit_frame.pack(fill="both", expand=True)
+        self.edit_title.delete(0, "end")
+        self.edit_title.insert(0, draft.get("title", ""))
+        self.edit_time.delete(0, "end")
+        self.edit_time.insert(0, draft.get("time", ""))
+        self.edit_note.delete("1.0", "end")
+        self.edit_note.insert("1.0", draft.get("note", ""))
+        self.edit_kind.set(draft.get("kind") or "task")
+        self.edit_priority.set(draft.get("priority") or "normal")
+        self.side_title.config(text="Edit Task" if idx is not None else "Add Task")
+        self._set_edit_message(message)
+        try:
+            self.edit_title.focus_set()
+        except tk.TclError:
+            pass
+
     def commit_task(self):
         title = self.edit_title.get().strip()
         if not title:
-            self.cancel_task()
+            # W2-003: a blank required field is a VALIDATION failure, not an
+            # implicit Cancel. The previous behaviour called cancel_task(),
+            # which destroyed a fully typed time/note/kind/priority draft with
+            # no warning. Only explicit Cancel/Esc discards.
+            self._set_edit_message("Title is required -- nothing was saved.")
+            try:
+                self.edit_title.focus_set()
+            except tk.TclError:
+                pass
             return
 
+        draft = self._editor_draft()
         time_str = self.edit_time.get().strip()
         note = self.edit_note.get("1.0", "end-1c").strip()
         kind = self.edit_kind.get().strip().lower() or "task"
@@ -1411,9 +1708,23 @@ class CompactCalendarApp:
 
         prev_dirty = self._dirty
         self._dirty = True
-        if not self.save():
+        res = self.save()
+        if res is STALE_WRITER:
+            # CORE-001: STALE_WRITER is NOT success. The disk snapshot has been
+            # replaced by another instance's, so `rollback()` would index a list
+            # that no longer exists -- and the old truthiness check fell through
+            # here as if the task had been written. Keep the draft, re-enter the
+            # editor, and let the user re-commit against the winning snapshot.
+            self._restore_editor_draft(
+                draft,
+                "Another instance saved newer data. Your draft was kept -- press Save again.",
+            )
+            self._update_day_visuals(self.selected_day)
+            return
+        if res is not True:
             self._dirty = prev_dirty
             rollback()
+            self._set_edit_message("Save failed -- your draft was kept.")
             try:
                 messagebox.showerror(
                     "Save failed",
@@ -1431,10 +1742,14 @@ class CompactCalendarApp:
     def cancel_task(self):
         self.is_editing = False
         self.editing_idx = None
+        self._set_edit_message("")
         self.edit_frame.pack_forget()
         self.view_frame.pack(fill="both", expand=True)
         self.side_title.config(text="Day details")
         self.root.focus_set()
+        # CORE-002: a reload that arrived mid-edit deferred its full render;
+        # the editor no longer owns the panel, so finish it now.
+        self._flush_pending_reconcile()
 
     def _selected_index(self):
         items = self.tasks.get(self._task_key(), [])
@@ -1503,7 +1818,16 @@ class CompactCalendarApp:
             self._selected_task_idx -= 1
         prev_dirty = self._dirty
         self._dirty = True
-        if not self.save():
+        res = self.save()
+        if res is STALE_WRITER:
+            # CORE-001: the runtime now holds the winner's snapshot; restoring
+            # our deleted item into it would resurrect a row the winner does not
+            # have. Report the conflict instead of implying the delete committed.
+            self._notify_stale_reload("The deletion was not saved")
+            self._update_day_visuals(self.selected_day)
+            self._render_side()
+            return
+        if res is not True:
             self._dirty = prev_dirty
             # Roll back the in-memory deletion.
             self.tasks.setdefault(key, []).insert(idx, removed)
@@ -1533,7 +1857,15 @@ class CompactCalendarApp:
         items[idx].done = not prev_done
         prev_dirty = self._dirty
         self._dirty = True
-        if not self.save():
+        res = self.save()
+        if res is STALE_WRITER:
+            # CORE-001: `items` came from the pre-reload model; the reloaded
+            # snapshot owns the task list now. Do not claim the toggle stuck.
+            self._notify_stale_reload("The change was not saved")
+            self._update_day_visuals(self.selected_day)
+            self._render_side()
+            return
+        if res is not True:
             self._dirty = prev_dirty
             items[idx].done = prev_done
             try:
@@ -1561,7 +1893,16 @@ class CompactCalendarApp:
         self._apply_focus_visual(new)
         prev_dirty = self._dirty
         self._dirty = True
-        if not self.save():
+        res = self.save()
+        if res is STALE_WRITER:
+            # CORE-001 + CORE-002: the reload replaced `self.settings` with the
+            # winner's, which may itself carry a different focus_mode. Restoring
+            # our own previous visual would contradict the loaded model, so
+            # reconcile the runtime from the authoritative settings instead.
+            self.reconcile_runtime_from_settings()
+            self._notify_stale_reload("Focus mode was not saved")
+            return
+        if res is not True:
             self._dirty = prev_dirty
             self.settings["focus_mode"] = prev
             self._apply_focus_visual(prev)
@@ -1574,9 +1915,22 @@ class CompactCalendarApp:
             except tk.TclError:
                 pass
 
-    def _apply_focus_visual(self, active: bool):
+    def _notify_stale_reload(self, what):
+        """One place says "another instance won" -- never silence, never success."""
+        try:
+            messagebox.showwarning(
+                "Data reloaded",
+                f"Another instance saved newer data. {what}; the current view was "
+                "reloaded from disk. Re-apply your change if you still want it.",
+                parent=self.root,
+            )
+        except tk.TclError:
+            pass
+
+    def _apply_focus_visual(self, active: bool, capture: bool = True):
         if active:
-            self._pre_focus_fs = self.root.attributes("-fullscreen")
+            if capture:
+                self._pre_focus_fs = self.root.attributes("-fullscreen")
             self.top.pack_forget()
             self.btns.pack_forget()
             self.right.pack_forget()
@@ -1744,26 +2098,20 @@ class CompactCalendarApp:
             res = self.save()
             if res is STALE_WRITER:
                 # Another instance committed newer settings; state was reloaded
-                # from disk, so keep that rather than rolling back.
+                # from disk. W2-004: reconcile the runtime from that
+                # authoritative model -- the staged effects above belong to a
+                # candidate that never reached disk.
+                self._draft_colors = {}
+                self.reconcile_runtime_from_settings()
+                self._notify_stale_reload("The settings change was not saved")
                 return False
             if res is not True:
-                # Persistence failed: revert runtime effects + in-memory state.
+                # Persistence failed: restore the model, then reconcile every
+                # runtime effect from it through the ONE shared path (W2-004).
                 self.settings = prev_settings
                 self._dirty = prev_dirty
-                if "always_on_top" in changed_keys:
-                    self.root.attributes("-topmost", prev_settings.get("always_on_top", True))
-                if "fullscreen_start" in changed_keys and not prev_settings.get("focus_mode", False):
-                    self.root.attributes("-fullscreen", prev_settings.get("fullscreen_start", True))
-                if "focus_mode" in changed_keys:
-                    self._apply_focus_visual(prev_settings.get("focus_mode", False))
-                if "show_clock" in changed_keys:
-                    # CORE-008: restart/reconcile the clock against the restored
-                    # setting so exactly one pending callback remains scheduled.
-                    self._start_clock()
-                if need_style:
-                    self._build_style()
-                if need_geom or need_style:
-                    self._refresh_all()
+                self._pre_focus_fs = prev_focus_fs
+                self.reconcile_runtime_from_settings()
                 try:
                     messagebox.showerror(
                         "Save failed",
@@ -1774,8 +2122,18 @@ class CompactCalendarApp:
                     pass
                 return False
         except Exception:
+            # W2-004: the old handler restored only `settings` and `_dirty`, so a
+            # TclError raised after `-topmost` had been applied left the live
+            # window contradicting the model it had just reverted. Reconcile the
+            # full runtime from the restored model, THEN re-raise: rollback is
+            # not the same act as hiding a programmer error.
             self.settings = prev_settings
             self._dirty = prev_dirty
+            self._pre_focus_fs = prev_focus_fs
+            try:
+                self.reconcile_runtime_from_settings()
+            except Exception:
+                pass
             raise
         # Success: clear the staged color draft and refresh presentation.
         self._draft_colors = {}
@@ -1833,73 +2191,70 @@ class CompactCalendarApp:
         """Refuse calendar-date mutation while an editor session is active."""
         return self.is_editing
 
+    def _navigate_to(self, y, m, day=None):
+        """W2-005: one candidate-then-commit navigation primitive.
+
+        Domain validation happens FIRST, and `_dirty` is set only after the
+        persisted state actually changed. The old methods marked dirty before
+        checking the boundary, so `prev_month()` at year 1 advanced the disk
+        generation for an unchanged snapshot -- manufacturing a writer event that
+        could force another current instance through stale-writer recovery.
+        """
+        if not (date.min.year <= y <= date.max.year):
+            return False
+        if not (1 <= m <= 12):
+            return False
+        try:
+            max_day = calendar.monthrange(y, m)[1]
+        except (ValueError, OverflowError):
+            return False
+        candidate_day = self.selected_day if day is None else day
+        candidate_day = max(1, min(int(candidate_day), max_day))
+        if (y, m, candidate_day) == (self.current.year, self.current.month, self.selected_day):
+            # Genuine no-op: no dirty transition, no generation advance.
+            return False
+        self.current = date(y, m, 1)
+        self.selected_day = candidate_day
+        self._dirty = True
+        self._reset_selection_cache()
+        self._refresh_all()
+        return True
+
     def prev_month(self):
         if self._nav_guard():
             return
-        self._dirty = True  # W2-005: navigation changes persisted state
         y, m = self.current.year, self.current.month
         if m == 1:
-            if y <= date.min.year:
-                return  # CORE-009: no-op at domain boundary
-            y -= 1
-            m = 12
+            y, m = y - 1, 12
         else:
             m -= 1
-        self.current = date(y, m, 1)
-        self.selected_day = min(self.selected_day, calendar.monthrange(y, m)[1])
-        self._reset_selection_cache()  # W2-005
-        self._refresh_all()
+        self._navigate_to(y, m)
 
     def next_month(self):
         if self._nav_guard():
             return
-        self._dirty = True  # W2-005: navigation changes persisted state
         y, m = self.current.year, self.current.month
         if m == 12:
-            if y >= date.max.year:
-                return  # CORE-009: no-op at domain boundary
-            y += 1
-            m = 1
+            y, m = y + 1, 1
         else:
             m += 1
-        self.current = date(y, m, 1)
-        self.selected_day = min(self.selected_day, calendar.monthrange(y, m)[1])
-        self._reset_selection_cache()  # W2-005
-        self._refresh_all()
+        self._navigate_to(y, m)
 
     def prev_year(self):
         if self._nav_guard():
             return
-        self._dirty = True  # W2-005: navigation changes persisted state
-        y = self.current.year - 1
-        if y < date.min.year: return
-        m = self.current.month
-        self.current = date(y, m, 1)
-        self.selected_day = min(self.selected_day, calendar.monthrange(y, m)[1])
-        self._reset_selection_cache()  # W2-005
-        self._refresh_all()
+        self._navigate_to(self.current.year - 1, self.current.month)
 
     def next_year(self):
         if self._nav_guard():
             return
-        self._dirty = True  # W2-005: navigation changes persisted state
-        y = self.current.year + 1
-        if y > date.max.year: return
-        m = self.current.month
-        self.current = date(y, m, 1)
-        self.selected_day = min(self.selected_day, calendar.monthrange(y, m)[1])
-        self._reset_selection_cache()  # W2-005
-        self._refresh_all()
+        self._navigate_to(self.current.year + 1, self.current.month)
 
     def go_today(self):
         if self._nav_guard():
             return
-        self._dirty = True  # W2-005: navigation changes persisted state
         t = date.today()
-        self.current = date(t.year, t.month, 1)
-        self.selected_day = t.day
-        self._reset_selection_cache()  # W2-005
-        self._refresh_all()
+        self._navigate_to(t.year, t.month, t.day)
 
     def _start_clock(self):
         """(Re)start the single clock timer, canceling any pending one."""
@@ -1940,12 +2295,45 @@ class CompactCalendarApp:
 
     def save(self):
         # W2-005: a clean instance (nothing diverged from the last successful
-        # save/load) still performs the locked write but WITHOUT advancing the
-        # generation, so it cannot invalidate another instance or create a
-        # false conflict. A dirty instance advances generation exactly once.
+        # save/load) does not advance the generation, so it cannot invalidate
+        # another instance or create a false conflict. A dirty instance advances
+        # generation exactly once. PERF-001 turns the clean case into a true
+        # no-op when the file on disk is still the one we validated.
         if not self._dirty:
             return self._save(advance=False)
         return self._save(advance=True)
+
+    def _preservation_ok(self):
+        """W2-001: is DATA_PATH writable at all?
+
+        `_load_failed` was only ever a warning flag; this is the authorization.
+        When the load could not represent persisted bytes, an immutable snapshot
+        MUST exist before the reduced model may replace the original. A retry is
+        attempted first, because a transient quarantine failure (a full backup
+        namespace, a momentary permission problem) should not permanently brick
+        saving once the obstacle is gone.
+        """
+        if not self._write_blocked:
+            return True
+        if self._preservation_required and self._quarantine_file():
+            self._write_blocked = False
+            self._write_block_reason = None
+            return True
+        return False
+
+    def _latch_write_block(self, reason):
+        """Fail closed: record WHY the original file may not be replaced."""
+        self._preservation_required = True
+        self._write_blocked = True
+        self._write_block_reason = reason
+
+    def _require_preservation(self, reason):
+        """Demand an immutable snapshot; latch fail-closed if none can be made."""
+        self._preservation_required = True
+        if not self._quarantine_file():
+            self._latch_write_block(reason)
+            return False
+        return True
 
     def manual_save(self):
         # W2-004: explicit user-requested Save (toolbar button + 's' shortcut).
@@ -1953,24 +2341,47 @@ class CompactCalendarApp:
         # claims success. A clean save that wrote nothing is not an error.
         res = self.save()
         if res is STALE_WRITER:
-            try:
-                messagebox.showwarning(
-                    "Data reloaded",
-                    "Another instance saved newer data. The current view was reloaded; re-apply your change if needed.",
-                    parent=self.root,
-                )
-            except tk.TclError:
-                pass
+            self._notify_stale_reload("Your latest change was not saved")
             return
         if res is not True:
             try:
                 messagebox.showerror(
                     "Save failed",
-                    "Could not write data to disk. Your latest change was not saved.",
+                    self._save_failure_text(),
                     parent=self.root,
                 )
             except tk.TclError:
                 pass
+
+    def _save_failure_text(self):
+        if self._write_blocked:
+            return (
+                "Saving is disabled: the damaged data file could not be backed "
+                f"up ({self._write_block_reason or 'unknown reason'}), so replacing "
+                "it would destroy the only copy of the unrecovered records."
+            )
+        return "Could not write data to disk. Your latest change was not saved."
+
+    def _snapshot_identity(self):
+        """PERF-001: cheap identity of the current DATA_PATH snapshot.
+
+        File id + device + size + nanosecond mtime/ctime. Deliberately NOT
+        `(size, mtime)` alone: a same-size replacement inside one timestamp tick
+        would then read as unchanged and let an external writer escape stale
+        detection. Returns None when identity cannot be established, which the
+        caller treats as "take the authoritative slow path".
+        """
+        try:
+            st = DATA_PATH.stat()
+        except OSError:
+            return None
+        ino = getattr(st, "st_ino", 0)
+        dev = getattr(st, "st_dev", 0)
+        if not ino:
+            # No usable file identity on this filesystem: refuse the fast path
+            # rather than trusting timestamps alone.
+            return None
+        return (ino, dev, st.st_size, st.st_mtime_ns, getattr(st, "st_ctime_ns", 0))
 
     def _read_disk_generation(self):
         """Return the generation stored on disk, or None if missing/empty.
@@ -2007,6 +2418,9 @@ class CompactCalendarApp:
         instance committed newer data. CORE-002: lock acquisition failures
         return False without entering the critical section.
         """
+        # W2-001: the write barrier is checked before the lock is even taken.
+        if not self._preservation_ok():
+            return False
         try:
             with _save_lock(DATA_PATH):
                 return self._save_locked(advance)
@@ -2016,14 +2430,67 @@ class CompactCalendarApp:
             self._reload_from_disk()
             return STALE_WRITER
 
+    def _reclaim_orphan_temps(self, keep=None):
+        """PERF-005: delete crash-abandoned atomic-write candidates.
+
+        Only legal while `_save_lock` is held: the lock is global to every
+        cooperative writer, so no live writer can own one of these paths right
+        now. Matches the exact prefix AND suffix in DATA_PATH's own directory --
+        never DATA_PATH, never a `.corrupt*.bak` snapshot, never the `.lock`
+        file, never an unrelated temp file. Best-effort: a file we cannot remove
+        is left alone and never authorizes unsafe persistence.
+        """
+        try:
+            entries = list(DATA_PATH.parent.glob(TMP_PREFIX + "*" + TMP_SUFFIX))
+        except OSError:
+            return
+        for p in entries:
+            if keep is not None and str(p) == str(keep):
+                continue
+            if not (p.name.startswith(TMP_PREFIX) and p.name.endswith(TMP_SUFFIX)):
+                continue
+            try:
+                if p.is_file():
+                    p.unlink()
+            except OSError:
+                pass
+
     def _save_locked(self, advance=True):
         try:
-            try:
-                disk_gen = self._read_disk_generation()
-            except UnreadableDataFile:
-                if not self._quarantine_file():
-                    return False
-                disk_gen = None
+            # PERF-001: is the file on disk still the exact snapshot this
+            # instance last loaded or wrote? If so its generation is already
+            # known and no O(file-size) decode+parse is needed. Any doubt --
+            # unknown identity, changed identity, active recovery state -- falls
+            # through to the authoritative slow path, so an external writer can
+            # never escape stale detection by matching a weak signature.
+            identity = self._snapshot_identity()
+            fast_path = (
+                identity is not None
+                and self._disk_identity is not None
+                and identity == self._disk_identity
+                and not self._preservation_required
+                and not self._write_blocked
+                and not self._load_failed
+            )
+            if fast_path:
+                if not advance and not self._dirty:
+                    # A clean instance over an unchanged file: a true no-op.
+                    # Serializing the whole payload here was pure cost (measured
+                    # 71 ms / 16 MiB transient on an 8 MiB dataset) and, worse,
+                    # W2-001 proved it could overwrite unpreserved bytes.
+                    return True
+                disk_gen = self._generation
+            else:
+                try:
+                    disk_gen = self._read_disk_generation()
+                except UnreadableDataFile as exc:
+                    # W2-001: the present file cannot be understood. It may only
+                    # be replaced once its bytes are preserved.
+                    if not self._require_preservation(
+                        "backup of the unreadable data file failed: %s" % exc
+                    ):
+                        return False
+                    disk_gen = None
             if disk_gen is not None and disk_gen != self._generation:
                 raise _StaleWriter()
             if disk_gen is None:
@@ -2041,8 +2508,10 @@ class CompactCalendarApp:
                 "generation": next_gen,
             }
             DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+            # PERF-005: reclaim earlier crash orphans while we hold the lock.
+            self._reclaim_orphan_temps()
             fd, tmp_path = tempfile.mkstemp(
-                dir=str(DATA_PATH.parent), prefix=".cal_tmp_", suffix=".json"
+                dir=str(DATA_PATH.parent), prefix=TMP_PREFIX, suffix=TMP_SUFFIX
             )
             try:
                 # PERF-003: stream the encoded JSON straight into the temp
@@ -2055,6 +2524,8 @@ class CompactCalendarApp:
                 self._generation = next_gen
                 self._loaded_generation = next_gen
                 self._dirty = False
+                # PERF-001: this instance is now the last known writer.
+                self._disk_identity = self._snapshot_identity()
                 return True
             except Exception:
                 try: os.unlink(tmp_path)
@@ -2101,158 +2572,205 @@ class CompactCalendarApp:
     def _reload_from_disk(self):
         """CORE-003: reload the current on-disk snapshot after a stale-writer
         rejection so the runtime matches the winner and the next save can
-        commit. Refreshes the UI without dropping an active editor draft.
+        commit.
+
+        CORE-002: the model is not the runtime. Reload used to update settings
+        and then replay only `_apply_window_mode`, leaving style, focus packing
+        and the clock derived from the LOSING snapshot -- so the settings could
+        say focus mode was active while every panel was still packed. One
+        reconciliation path now owns that, and an active editor keeps its draft
+        while the render half is deferred to `cancel_task`.
         """
         self._reset_selection_cache()
         self._load()
         self._dirty = False
-        if not self.is_editing:
-            self._apply_window_mode()
-            self._refresh_all()
-        else:
-            self._apply_window_mode()
+        self.reconcile_runtime_from_settings(render=not self.is_editing)
 
-    def _load(self):
+    def _decode_snapshot(self):
+        """W2-002: decode DATA_PATH into a COMPLETE fresh candidate snapshot.
+
+        Returns the candidate dict, or None when DATA_PATH does not exist.
+        Touches no instance model state: every section starts from documented
+        defaults (`DEFAULT_SETTINGS.copy()`, empty tasks, today's date policy,
+        generation 0) so identical bytes decode to an identical model no matter
+        what this instance happened to be holding. The previous merge-into-live
+        implementation made `_load` history-dependent: a stale-writer reload
+        could keep the LOSER's `cell_gap`/font sizes for any key the winning
+        snapshot omitted, and later write them back over the newer file.
+
+        Structural corruption is reported, never silently defaulted: a present
+        settings/state value of the wrong type is partial recovery requiring
+        preservation, while a MISSING section is ordinary backward compatibility.
+        """
         if not DATA_PATH.exists():
-            return
-        # Reset recovery state so a reload starts clean (used by CORE-003).
-        self._load_failed = False
-        self._partial_recovery = False
-        self._invalid_task_keys = []
-        self._recovery_message = None
-        raw_text = None
+            return None
+        snap = {
+            "settings": DEFAULT_SETTINGS.copy(),
+            "tasks": {},
+            "current": None,
+            "selected_day": None,
+            "generation": 0,
+            "load_failed": False,
+            "partial_recovery": False,
+            "invalid_task_keys": [],
+            "recovery_message": None,
+            "preservation_required": False,
+            "fatal": None,
+        }
         try:
             raw_text = DATA_PATH.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as e:
-            # W2-003: non-UTF-8 bytes must enter the same recoverable failure flow
-            self._load_failed = True
-            if not self._quarantine_file():
-                self._load_failed = False
-            return
-        payload = None
+        except (OSError, UnicodeError) as exc:
+            # W2-003: non-UTF-8 bytes are a recoverable failure, not a crash.
+            snap["fatal"] = "the data file could not be decoded: %s" % exc
+            snap["load_failed"] = True
+            snap["preservation_required"] = True
+            return snap
         try:
             payload = json.loads(raw_text)
-        except (json.JSONDecodeError, ValueError):
-            self._load_failed = True
-            if not self._quarantine_file():
-                self._load_failed = False
-            return
-        raw_text = None  # PERF-006: release the decoded source before materializing
+        except (json.JSONDecodeError, ValueError) as exc:
+            snap["fatal"] = "the data file is not valid JSON: %s" % exc
+            snap["load_failed"] = True
+            snap["preservation_required"] = True
+            return snap
+        raw_text = None  # PERF-006: release the decoded source early
         if not isinstance(payload, dict):
-            self._load_failed = True
-            if not self._quarantine_file():
-                self._load_failed = False
-            return
-        # CORE-001 + CORE-002: Parse each section independently
-        raw_settings = payload.get("settings", {})
-        if isinstance(raw_settings, dict):
-            new_settings = normalize_settings(raw_settings)
-            if new_settings:
-                for k, v in new_settings.items():
-                    if k in DEFAULT_SETTINGS:
-                        self.settings[k] = v
-        raw_tasks = payload.get("tasks", {})
-        if not isinstance(raw_tasks, dict):
-            # Wrong top-level shape for the tasks section: structural loss.
-            # Preserve the original file and keep recovery state (CORE-001).
-            self._partial_recovery = True
-            self._recovery_message = (
-                "The 'tasks' section was not an object; the original file was preserved."
-            )
-            self._load_failed = True
-            self._quarantine_file()
-        else:
-            loaded_tasks = {}
-            for k, v in raw_tasks.items():
-                if not isinstance(k, str):
-                    # Non-string key: unrecoverable; record for forensics.
-                    self._invalid_task_keys.append(k)
-                    self._partial_recovery = True
-                    continue
-                if not isinstance(v, list):
-                    # Bucket is not a list: structural loss; preserve original.
-                    self._invalid_task_keys.append(k)
-                    self._partial_recovery = True
-                    continue
-                # W2-003: validate and canonicalize the task key. Shared with
-                # _task_key so the load path and the runtime key contract
-                # agree on what a real date looks like.
-                canonical = _canonical_task_key(k)
-                if canonical is None:
-                    # Impossible / unrecoverable date key: keep it OUT of live
-                    # tasks. The original file (with these buckets) is preserved
-                    # via quarantine so the data stays recoverable (W2-002).
-                    self._invalid_task_keys.append(k)
-                    self._partial_recovery = True
-                    continue
-                good = [x for x in v if isinstance(x, dict)]
-                if len(good) != len(v):
-                    # At least one entry could not be represented losslessly.
-                    self._partial_recovery = True
-                existing = loaded_tasks.get(canonical, [])
-                existing.extend(CalendarTask.from_dict(x) for x in good)
-                loaded_tasks[canonical] = existing
-            self.tasks = loaded_tasks
-            if self._partial_recovery:
-                # Preserve the sole copy of every rejected byte/record before
-                # any subsequent rewrite (CORE-001): the quarantine snapshot
-                # holds the original, untouched file.
-                self._load_failed = True
-                if self._recovery_message is None:
-                    self._recovery_message = (
+            snap["fatal"] = "the data file does not contain an object"
+            snap["load_failed"] = True
+            snap["preservation_required"] = True
+            return snap
+
+        # ---- settings -------------------------------------------------------
+        if "settings" in payload:
+            raw_settings = payload["settings"]
+            if isinstance(raw_settings, dict):
+                snap["settings"].update(normalize_settings(raw_settings))
+            else:
+                # CORE-004: present but structurally wrong. The old code skipped
+                # it as if absent, and the next save rewrote the malformed
+                # section as a normalized dict with no backup -- destroying the
+                # only copy of whatever was there.
+                snap["partial_recovery"] = True
+                snap["preservation_required"] = True
+                snap["recovery_message"] = (
+                    "The 'settings' section was not an object; defaults were used "
+                    "and the original file was preserved."
+                )
+
+        # ---- tasks ----------------------------------------------------------
+        if "tasks" in payload:
+            raw_tasks = payload["tasks"]
+            if not isinstance(raw_tasks, dict):
+                snap["partial_recovery"] = True
+                snap["preservation_required"] = True
+                snap["recovery_message"] = (
+                    "The 'tasks' section was not an object; the original file was preserved."
+                )
+            else:
+                loaded_tasks = {}
+                for k, v in raw_tasks.items():
+                    if not isinstance(k, str) or not isinstance(v, list):
+                        # Non-string key or non-list bucket: unrepresentable.
+                        snap["invalid_task_keys"].append(k)
+                        snap["partial_recovery"] = True
+                        snap["preservation_required"] = True
+                        continue
+                    # W2-003: shared key parser/normalizer, so the load path and
+                    # the runtime key contract agree on what a real date is.
+                    canonical = _canonical_task_key(k)
+                    if canonical is None:
+                        snap["invalid_task_keys"].append(k)
+                        snap["partial_recovery"] = True
+                        snap["preservation_required"] = True
+                        continue
+                    good = [x for x in v if isinstance(x, dict)]
+                    if len(good) != len(v):
+                        # At least one record cannot be represented losslessly.
+                        snap["partial_recovery"] = True
+                        snap["preservation_required"] = True
+                    existing = loaded_tasks.get(canonical, [])
+                    existing.extend(CalendarTask.from_dict(x) for x in good)
+                    loaded_tasks[canonical] = existing
+                snap["tasks"] = loaded_tasks
+                if snap["partial_recovery"] and snap["recovery_message"] is None:
+                    snap["recovery_message"] = (
                         "Some tasks could not be recovered; the original file was preserved."
                     )
-                self._quarantine_file()
-        st = payload.get("state", {})
-        if isinstance(st, dict):
-            self._apply_state(st)
-        gen = payload.get("generation", 0)
+
+        # ---- state ----------------------------------------------------------
+        if "state" in payload:
+            st = payload["state"]
+            if isinstance(st, dict):
+                snap["current"], snap["selected_day"] = _decode_state(st)
+            else:
+                snap["partial_recovery"] = True
+                snap["preservation_required"] = True
+                if snap["recovery_message"] is None:
+                    snap["recovery_message"] = (
+                        "The 'state' section was not an object; today's date was used "
+                        "and the original file was preserved."
+                    )
+                snap["current"], snap["selected_day"] = _decode_state({})
+        if snap["current"] is None:
+            # Missing state section: documented default, NOT corruption.
+            snap["current"], snap["selected_day"] = _decode_state({})
+
+        # ---- generation -----------------------------------------------------
         try:
-            self._generation = _parse_generation(gen)
+            snap["generation"] = _parse_generation(payload.get("generation", 0))
         except (TypeError, ValueError, OverflowError):
-            # Invalid/negative generation: preserve the original file via
-            # quarantine and start clean (CORE-007).
-            self._load_failed = True
-            self._partial_recovery = True
-            self._recovery_message = (
+            # CORE-003: never coerce an ownership token. Preserve and restart.
+            snap["generation"] = 0
+            snap["partial_recovery"] = True
+            snap["preservation_required"] = True
+            snap["recovery_message"] = (
                 "Invalid generation counter; the original file was preserved."
             )
-            if not self._quarantine_file():
-                self._load_failed = False
-            self._generation = 0
+        if snap["partial_recovery"]:
+            snap["load_failed"] = True
+        return snap
+
+    def _load(self):
+        """Decode the on-disk snapshot, then commit it atomically.
+
+        W2-002: decode-then-commit, so the same bytes produce the same model on
+        startup and on reload, and a failed decode never leaves a hybrid of the
+        previous runtime and the new file.
+        """
+        snap = self._decode_snapshot()
+        if snap is None:
+            # No file yet: keep the constructor defaults (fresh dataset).
+            self._disk_identity = None
+            return
+        # Recovery state always reflects THIS decode, not an older one.
+        self._load_failed = snap["load_failed"]
+        self._partial_recovery = snap["partial_recovery"]
+        self._invalid_task_keys = list(snap["invalid_task_keys"])
+        self._recovery_message = snap["recovery_message"]
+        if snap["preservation_required"]:
+            # W2-001: bytes were dropped or could not be represented. The
+            # original file may only be replaced once an immutable snapshot of
+            # it exists; if that snapshot cannot be created, saving is latched
+            # closed instead of quietly overwriting the sole copy later.
+            reason = "no backup of the damaged data file could be created"
+            self._require_preservation(reason)
+        if snap["fatal"] is not None:
+            # Unreadable/undecodable file: start a fresh dataset but keep the
+            # original preserved and the failure visible.
+            self._recovery_message = snap["fatal"]
+            self._disk_identity = None
+            return
+        self.settings = snap["settings"]
+        self.tasks = snap["tasks"]
+        self.current = snap["current"]
+        self.selected_day = snap["selected_day"]
+        self._generation = snap["generation"]
         self._loaded_generation = self._generation
+        # PERF-001: remember exactly which snapshot this model came from.
+        self._disk_identity = self._snapshot_identity()
 
     def _apply_state(self, st):
-        today = date.today()
-        try:
-            y = int(st.get("year", today.year))
-            if _is_non_finite(st.get("year")):
-                raise ValueError
-        except (TypeError, ValueError, OverflowError):
-            y = today.year
-        try:
-            m = int(st.get("month", today.month))
-            if _is_non_finite(st.get("month")):
-                raise ValueError
-        except (TypeError, ValueError, OverflowError):
-            m = today.month
-        try:
-            d = int(st.get("selected_day", today.day))
-            if _is_non_finite(st.get("selected_day")):
-                raise ValueError
-        except (TypeError, ValueError, OverflowError):
-            d = today.day
-        if not (1 <= m <= 12):
-            m = today.month
-        if not (date.min.year <= y <= date.max.year):
-            y = today.year
-        try:
-            max_day = calendar.monthrange(y, m)[1]
-        except ValueError:
-            y, m = today.year, today.month
-            max_day = calendar.monthrange(y, m)[1]
-        self.current = date(y, m, 1)
-        self.selected_day = min(max(1, d), max_day)
+        """Compatibility shim: apply a decoded `state` section to the model."""
+        self.current, self.selected_day = _decode_state(st)
 
     def exit_app(self, event=None):
         # W2-002: an active editor owns an uncommitted draft. WM_DELETE
@@ -2266,18 +2784,38 @@ class CompactCalendarApp:
             )
             if choice is None or not choice:
                 return
-        if self._save():
+        # CORE-001: route shutdown through the public dirty-aware contract.
+        # `_save()` bypassed it, so a clean exit advanced the generation for a
+        # snapshot nothing had changed -- manufacturing future stale-writer
+        # conflicts for other instances -- and a truthy STALE_WRITER destroyed
+        # the window while the user's unsaved state was still in memory.
+        res = self.save()
+        if res is True:
             self.root.destroy()
-        else:
+            return
+        if res is STALE_WRITER:
+            # Another instance won. The local model has been replaced by theirs,
+            # so quitting silently would discard whatever the user had. Only an
+            # explicit choice may end the process here.
             choice = messagebox.askyesnocancel(
-                "Save failed",
-                "Could not save data. Quit without saving?",
+                "Data reloaded",
+                "Another instance saved newer data, so your latest change was not "
+                "saved. The view was reloaded from disk.\n\n"
+                "Quit anyway and discard your change?",
                 parent=self.root,
             )
-            if choice is None:
-                return
             if choice:
                 self.root.destroy()
+            return
+        choice = messagebox.askyesnocancel(
+            "Save failed",
+            self._save_failure_text() + "\n\nQuit without saving?",
+            parent=self.root,
+        )
+        if choice is None:
+            return
+        if choice:
+            self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()

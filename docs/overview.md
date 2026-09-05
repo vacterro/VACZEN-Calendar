@@ -32,10 +32,10 @@ the executable.
   fullscreen state for restore and updates that target when
   `fullscreen_start` changes while active (W2-006).
 - Settings panel: booleans, spinboxes, font pickers, 15 color
-  pickers, Apply/Default. Apply validates into a candidate, uses
-  `set(changed)` for the diff (W2-001), and rolls back on persistence
-  failure (CORE-003). Default runs through the normal change pipeline
-  (CORE-005).
+  pickers, Apply/Default. Apply validates into a full candidate and runs
+  the shared `_commit_settings` pipeline, which uses `set(changed)` for
+  the diff (W2-001) and rolls back on persistence failure (CORE-003/006).
+  Default submits `DEFAULT_SETTINGS` through the same pipeline (CORE-005/006).
 - Live clock label, refreshed on a self-rescheduling `after` loop.
 - Keyboard-driven navigation and task management (see keyboard.md).
 - Single-file, stdlib-only, no third-party dependencies.

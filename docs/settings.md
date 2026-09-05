@@ -33,21 +33,32 @@ which walks `DEFAULT_SETTINGS` key by key:
   vars from live settings **only when opening** (W2-008). Mid-session
   refreshes do not clobber draft edits.
 - Apply: `apply_settings` collects raw widget values, runs them through
-  `normalize_settings` into a **candidate copy first** (W2-006), computes
-  the diff against the live settings as a **set** (W2-001), reapplies
-  topmost/fullscreen attributes, rebuilds style, saves, and rerenders.
+  `normalize_settings` into a **full candidate settings dict** (W2-006),
+  then calls `_commit_settings`, which diffs the candidate against the
+  live settings as a **set** (W2-001), applies the changed
+  topmost/fullscreen/focus/clock/style effects, persists, and rerenders.
   The candidate is committed to `self.settings` only after `_save`
-  succeeds; on persistence failure the runtime effects and in-memory
-  settings are rolled back (CORE-003).
+  succeeds.
+- Rollback is one path for every non-successful outcome (W2-004). `False`,
+  `STALE_WRITER` and an exception raised mid-staging all restore the model
+  and then reconcile the FULL runtime through
+  `reconcile_runtime_from_settings`; unexpected exceptions are re-raised
+  after that rollback. The old exception handler restored only
+  `self.settings` and `_dirty`, so a `TclError` raised after `-topmost` had
+  already been applied left the live window contradicting the model it had
+  just reverted. A `STALE_WRITER` outcome reconciles from the RELOADED
+  settings, because the staged effects belong to a candidate that never
+  reached disk.
 - Color picks: `pick_color` stages the color in `self._draft_colors`;
   only Apply commits it. The staged colors join the same candidate
   transaction in `apply_settings`.
-- Default: `reset_settings` syncs the Settings UI to `DEFAULT_SETTINGS`
-  via `_sync_settings_vars_to_defaults`, then runs the normal
-  `apply_settings` pipeline so the diff runs defaults against the
-  current live settings (CORE-005). It does not preassign
-  `self.settings = DEFAULT_SETTINGS` (that would make the diff empty and
-  skip the reset).
+- Default: `reset_settings` submits the complete `DEFAULT_SETTINGS`
+  through `_commit_settings` (the same shared pipeline as Apply, CORE-006),
+  so every setting -- including focus_mode, theme, lang and compact_header
+  that the panel does not expose -- reconciles to its default and rolls
+  back on failure. On success it syncs the UI vars via `_sync_settings_vars`.
+  It does not preassign `self.settings = DEFAULT_SETTINGS` (that would make
+  the diff empty and skip the reset).
 - While Focus mode is active, a `fullscreen_start` change updates the
   deferred restore target `_pre_focus_fs` instead of forcing the live
   fullscreen attribute (W2-006).
