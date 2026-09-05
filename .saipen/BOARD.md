@@ -31,6 +31,7 @@
 ## TODO
 
 ## DONE
+- [x] T-24 [P1] Execute external audit inbox layer audit/1.md (SRC-002); source_receipt=SRC-002 | verify: every actionable clause of SRC-002 is terminal with evidence; linked Work DONE; source closure succeeds; audit/1.md consumed by the journaled audit inbox cleanup; source_receipt=SRC-002 | source_receipts: SRC-002 | owner: opencode | claim_time: 2026-09-05T17:37:46Z
 - [x] T-20 [P1] README.md EN beauty: badges (build, license, version, python, code size, lines), tagline, hero screenshot slot, 3-col feature grid, keyboard cheatsheet, docs/ table, install/usage minimal, contributor CTA, license footer | verify: 181 lines; all gh-relative links resolve to existing tracked files; badges shields.io dynamic; screenshot slot HTML-commented for later | owner: opencode | claim_time: 2026-09-01T12:00:00Z
 - [x] T-21 [P1] README.et.md beauty: full ET translation of T-20 structure, native phrasing, estonian tech terms (kalender, ülesanne, fookus, sätted, otsetee) | verify: 181 lines; structure section-for-section with README.md; estonian grammar checked; all real gh-relative links present | owner: opencode | claim_time: 2026-09-01T12:05:00Z
 - [x] T-22 [P1] README.ru.md beauty: full RU translation of T-20 structure, native phrasing | verify: 181 lines; structure matches README.md section-for-section; russian grammar checked; all real gh-relative links resolve | owner: opencode | claim_time: 2026-09-01T12:07:00Z
