@@ -36,3 +36,7 @@ env/
 *.backup
 CalendarTask_data.json
 ZenCalendar_data.json
+CalendarTask_data.json.lock
+_dbg.py
+_fix_audit.py
+_verify.py
