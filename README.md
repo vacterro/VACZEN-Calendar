@@ -1,60 +1,25 @@
+<div align="center">
+
 # VACZEN Calendar
 
-> Distraction-free, single-file Tk calendar + task tracker.
-> Win95-dark by default. One Python file, zero dependencies.
+**Distraction-free, single-file calendar and task tracker for people who would rather open a tool than maintain a productivity ecosystem.**
 
-<p align="center">
-  <img alt="License" src="https://img.shields.io/github/license/vacterro/VACZEN-Calendar?style=for-the-badge&color=9DD9F9">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.0.1-9DD9F9?style=for-the-badge">
-  <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-9DD9F9?style=for-the-badge&logo=python&logoColor=black">
-  <img alt="Single file" src="https://img.shields.io/badge/single%20file-yes-9DD9F9?style=for-the-badge">
-  <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-stdlib%20only-9DD9F9?style=for-the-badge">
-</p>
+[![Version](https://img.shields.io/badge/version-0.0.1-D4B86A?style=flat-square)](#)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
+![Dependencies](https://img.shields.io/badge/dependencies-stdlib%20only-4A7A20?style=flat-square)
+![Single file](https://img.shields.io/badge/app-single%20file-6B5A2B?style=flat-square)
+[![License](https://img.shields.io/github/license/vacterro/VACZEN-Calendar?style=flat-square)](LICENSE)
 
-<p align="center">
-  <img alt="GitHub repo size" src="https://img.shields.io/github/repo-size/vacterro/VACZEN-Calendar?style=flat-square">
-  <img alt="Code size" src="https://img.shields.io/github/languages/code-size/vacterro/VACZEN-Calendar/ZEN_CALENDAR.py?style=flat-square&label=ZEN_CALENDAR.py">
-  <img alt="Last commit" src="https://img.shields.io/github/last-commit/vacterro/VACZEN-Calendar?style=flat-square">
-  <img alt="Issues" src="https://img.shields.io/github/issues/vacterro/VACZEN-Calendar?style=flat-square">
-</p>
+[**Run it**](#-install) · [Keyboard](#-keyboard) · [Documentation](docs/overview.md) · [Issues](https://github.com/vacterro/VACZEN-Calendar/issues)
 
-<p align="center">
-  <a href="https://buymeacoffee.com/vacuum34"><img alt="Support" src="https://img.shields.io/badge/%E2%9D%A4%EF%B8%8F%20Support-9DD9F9?style=for-the-badge"></a>
-  <a href="docs/overview.md"><img alt="Docs" src="https://img.shields.io/badge/%F0%9F%93%9D%20Docs-9DD9F9?style=for-the-badge"></a>
-  <a href="#-keyboard"><img alt="Keys" src="https://img.shields.io/badge/%E2%9C%A8%20Shortcuts-9DD9F9?style=for-the-badge"></a>
-</p>
+<img src="docs/screenshot.png" alt="VACZEN Calendar running on Windows" width="760">
 
----
+</div>
+
+> Win95-dark by default. One Python file. Zero third-party dependencies.
 
 ## 📸 Screenshot
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Tue 01 Sep 2026  14:23:07   ◀ ▶   September 2026   ⌂ Today  │
-├──────────────────────────────────────────────────────────────┤
-│  Mo  Tu  We  Th  Fr  Sa  Su                                  │
-│       [ 1] [ 2] [ 3] [ 4] [ 5] [ 6]                          │
-│   [ 7] [ 8] [ 9][10] [11] [12] [13]                          │
-│  [14] [15] [16] [17] [18] [19] [20]                          │
-│  [21] [22] [23] [24] [25] [26] [27]                          │
-│  [28] [29] [30] [ 1] [ 2] [ 3] [ 4]                          │
-│                                                              │
-│            ┌─ Selected: Wed 16 Sep ─────────────┐            │
-│            │ • 09:00  Team standup     [done]   │            │
-│            │ • 14:00  Review PR #142            │            │
-│            │ • 19:30  🏃 Run, you lazy sack   │            │
-│            └────────────────────────────────────┘            │
-└──────────────────────────────────────────────────────────────┘
-   Ctrl+K settings   f   focus   s   save   Esc   quit
-```
-
-> ASCII rendition — the real thing is dark by default, golden-on-black, and
-> pixel-clean. Drop a real screenshot into `docs/screenshot.png` and uncomment
-> below when you have one.
-
-<!-- ![VACZEN Calendar running on Windows](docs/screenshot.png) -->
-
----
+## 📸 Screenshot
 
 ## ✨ Features
 
